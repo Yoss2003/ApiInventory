@@ -173,7 +173,7 @@ namespace InventoryAPI.Services
                 }
                 catch (Exception ex)
                 {
-                    return (false, new { mensaje = "Fallo al guardar la imagen en el servidor de Somee.", detalle = ex.Message }, ex.Message);
+                    return (false, new { mensaje = "No fue posible guardar la imagen. Intenta nuevamente." }, "No fue posible guardar la imagen.");
                 }
             }
 
@@ -222,7 +222,7 @@ namespace InventoryAPI.Services
             catch (Exception ex)
             {
                 await _workFlow.RollbackTransactionAsync();
-                return (false, ex.InnerException?.Message ?? ex.Message, "Error crítico SQL.");
+                return (false, new { mensaje = "No fue posible registrar el usuario. Verifica los datos e inténtalo nuevamente." }, "Error interno al registrar usuario.");
             }
         }
 
