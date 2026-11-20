@@ -21,10 +21,22 @@ builder.Logging.AddDebug();
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 var jwtKey = builder.Configuration["Jwt:Key"];
+var encryptionKey = builder.Configuration["Security:EncryptionKey"];
 if (string.IsNullOrWhiteSpace(connectionString))
     throw new InvalidOperationException("ConnectionStrings:DefaultConnection no está configurada.");
 if (string.IsNullOrWhiteSpace(jwtKey) || (!builder.Environment.IsDevelopment() && jwtKey.Length < 32))
     throw new InvalidOperationException("Jwt:Key no está configurada o no cumple la longitud mínima de 32 caracteres.");
+if (string.IsNullOrWhiteSpace(encryptionKey))
+{
+    if (builder.Environment.IsDevelopment())
+        encryptionKey = jwtKey;
+    else
+        throw new InvalidOperationException("Security:EncryptionKey no está configurada en producción.");
+}
+else if (!builder.Environment.IsDevelopment() && encryptionKey.Length < 32)
+{
+    throw new InvalidOperationException("Security:EncryptionKey debe tener al menos 32 caracteres en producción.");
+}
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -68,6 +80,8 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
+builder.Services.AddSingleton<ISecretProtector>(new AesGcmSecretProtector(encryptionKey));
+builder.Services.AddScoped<IDecolectaTokenProvider, DecolectaTokenProvider>();
 builder.Services.AddScoped<IWorkFlow, WorkFlow>();
 builder.Services.AddScoped<IPessimisticLockRepository, PessimisticLockRepository>();
 builder.Services.AddScoped<IAccountReceivableService, AccountReceivableService>();
@@ -160,6 +174,9 @@ builder.Services.AddCors(options =>
         }
     });
 });
+
+if (!builder.Environment.IsDevelopment() && allowedOrigins.Length == 0)
+    throw new InvalidOperationException("Cors:AllowedOrigins debe tener al menos un origen configurado en producción.");
 
 var app = builder.Build();
 

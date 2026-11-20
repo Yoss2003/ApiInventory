@@ -1,4 +1,5 @@
 using InventoryAPI.Data;
+using InventoryAPI.Security;
 using InventoryAPI.Services.IServices;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
@@ -10,7 +11,11 @@ using System.Security.Cryptography;
 namespace InventoryAPI.Services;
 
 /// <summary>Correo de bienvenida siguiendo la plantilla de MAUI; no registra ni devuelve claves al administrador.</summary>
-public sealed class UserCredentialMailer(AppDbContext db, IConfiguration config, ILogger<UserCredentialMailer> logger) : IUserCredentialMailer
+public sealed class UserCredentialMailer(
+    AppDbContext db,
+    IConfiguration config,
+    ISecretProtector secretProtector,
+    ILogger<UserCredentialMailer> logger) : IUserCredentialMailer
 {
     public static string NewTemporaryPassword() =>
         Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
@@ -37,7 +42,7 @@ public sealed class UserCredentialMailer(AppDbContext db, IConfiguration config,
             p.SmtpEmail != "" && p.SmtpPassword != "")
             .OrderByDescending(p => p.CompanyId == companyId).FirstOrDefaultAsync();
         return profile is null ? null : new SmtpConfig("smtp.gmail.com", 587,
-            profile.SmtpEmail!, profile.SmtpEmail!, profile.SmtpPassword!);
+            profile.SmtpEmail!, profile.SmtpEmail!, secretProtector.Unprotect(profile.SmtpPassword!));
     }
 
     public async Task<(bool Sent, string Message)> SendAsync(

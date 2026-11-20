@@ -2,12 +2,13 @@
 using InventoryAPI.Models.DTO;
 using InventoryAPI.Repositories;
 using InventoryAPI.Repositories.IRepositories;
+using InventoryAPI.Security;
 using InventoryAPI.Services.IServices;
 using Microsoft.EntityFrameworkCore;
 
 namespace InventoryAPI.Services
 {
-    public class ProfileService(IWorkFlow workFlow) : WorkContainer<Profile>(workFlow), IProfileService
+    public class ProfileService(IWorkFlow workFlow, ISecretProtector secretProtector) : WorkContainer<Profile>(workFlow), IProfileService
     {
         private static ProfileReadDto ToReadDto(Profile p) => new(
             p.Id,
@@ -88,7 +89,7 @@ namespace InventoryAPI.Services
                 LateFeePercentage = dto.LateFeePercentage,
                 GraceDays = dto.GraceDays,
                 SmtpEmail = dto.SmtpEmail?.Trim(),
-                SmtpPassword = string.IsNullOrWhiteSpace(dto.SmtpPassword) ? null : dto.SmtpPassword,
+                SmtpPassword = string.IsNullOrWhiteSpace(dto.SmtpPassword) ? null : secretProtector.Protect(dto.SmtpPassword),
                 SmtpApproverEmail = dto.SmtpApproverEmail?.Trim(),
                 QrBilletera = dto.QrBilletera
             };
@@ -132,7 +133,7 @@ namespace InventoryAPI.Services
             existingProfile.QrBilletera = dto.QrBilletera;
 
             if (!string.IsNullOrWhiteSpace(dto.SmtpPassword))
-                existingProfile.SmtpPassword = dto.SmtpPassword;
+                existingProfile.SmtpPassword = secretProtector.Protect(dto.SmtpPassword);
 
             _workFlow.Repository<Profile>().Update(existingProfile);
             await _workFlow.CompleteAsync();

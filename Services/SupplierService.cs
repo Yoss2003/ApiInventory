@@ -16,7 +16,7 @@ namespace InventoryAPI.Services
         IWorkFlow workFlow,
         HttpClient httpClient,
         AppDbContext db,
-        IConfiguration configuration,
+        IDecolectaTokenProvider decolectaTokens,
         IInventoryScopeService inventoryScope) : WorkContainer<Supplier>(workFlow), ISupplierService
     {
         private static readonly HashSet<string> AllowedFiscalKeys = new(StringComparer.Ordinal)
@@ -204,7 +204,7 @@ namespace InventoryAPI.Services
 
             try
             {
-                string apiToken = configuration["Decolecta:Token"]?.Trim() ?? "";
+                var apiToken = await decolectaTokens.GetTokenAsync();
                 if (string.IsNullOrWhiteSpace(apiToken))
                 {
                     apiToken = await db.Parameters.AsNoTracking()

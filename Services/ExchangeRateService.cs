@@ -7,7 +7,7 @@ using System.Text.Json;
 
 namespace InventoryAPI.Services;
 
-public sealed class ExchangeRateService(IWorkFlow workFlow, HttpClient httpClient, IConfiguration configuration)
+public sealed class ExchangeRateService(IWorkFlow workFlow, HttpClient httpClient, IDecolectaTokenProvider decolectaTokens)
     : WorkContainer<ExchangeRate>(workFlow), IExchangeRateService
 {
     public async Task<ExchangeRate> GetTodayExchangeRateAsync(string? currency)
@@ -19,7 +19,7 @@ public sealed class ExchangeRateService(IWorkFlow workFlow, HttpClient httpClien
             .FirstOrDefault();
         if (cache != null) return cache;
 
-        var token = configuration["DecolectaApi:ExchangeToken"];
+        var token = await decolectaTokens.GetTokenAsync(preferExchangeKey: true);
         if (!string.IsNullOrWhiteSpace(token))
         {
             try

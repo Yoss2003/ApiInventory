@@ -14,7 +14,7 @@ namespace InventoryAPI.Services
     // DNI y RUC utilizan la misma configuración central de Decolecta.
     // Nunca se devuelve el token o la respuesta cruda de errores del proveedor.
     public sealed class CustomerService(
-        IWorkFlow workFlow, HttpClient httpClient, AppDbContext db, IConfiguration configuration)
+        IWorkFlow workFlow, HttpClient httpClient, IDecolectaTokenProvider decolectaTokens)
         : WorkContainer<Customer>(workFlow), ICustomerService
     {
         public async Task<(bool IsSuccess, string DataOrError)> ConsultarDniExternoAsync(string dni)
@@ -24,18 +24,7 @@ namespace InventoryAPI.Services
 
             // La misma prioridad y el mismo ámbito de administración central
             // que se utilizan en SupplierService para consultar RUC.
-            var token = configuration["Decolecta:Token"]?.Trim() ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                token = await db.Parameters.AsNoTracking()
-                    .Where(p => p.CompanyId == 1 &&
-                        p.ParameterType == "API_KEY" && p.Name == "Decolecta_Token")
-                    .OrderBy(p => p.InventoryId == 0 ? 0 : 1)
-                    .Select(p => p.Description)
-                    .FirstOrDefaultAsync() ?? string.Empty;
-                token = token.Trim();
-            }
-
+            var token = await decolectaTokens.GetTokenAsync();
             if (string.IsNullOrWhiteSpace(token))
                 return (false, "El servicio de DNI no está configurado. Configura el token maestro de Decolecta.");
 

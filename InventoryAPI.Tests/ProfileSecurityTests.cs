@@ -2,6 +2,7 @@
 using InventoryAPI.Models;
 using InventoryAPI.Models.DTO;
 using InventoryAPI.Repositories;
+using InventoryAPI.Security;
 using InventoryAPI.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,6 +10,9 @@ namespace InventoryAPI.Tests;
 
 public sealed class ProfileSecurityTests
 {
+    private static readonly ISecretProtector Protector =
+        new AesGcmSecretProtector("TestMasterEncryptionKeyWith32CharsMinimum!");
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -27,11 +31,11 @@ public sealed class ProfileSecurityTests
             CompanyId = 1,
             Username = "admin",
             SmtpEmail = "soporte@empresa.com",
-            SmtpPassword = "SuperSecretPassword123!"
+            SmtpPassword = Protector.Protect("SuperSecretPassword123!")
         });
         await db.SaveChangesAsync();
 
-        var service = new ProfileService(new WorkFlow(db));
+        var service = new ProfileService(new WorkFlow(db), Protector);
 
         var own = await service.GetProfileByIdAsync(1, companyId: 1);
         var foreign = await service.GetProfileByIdAsync(1, companyId: 2);
@@ -43,33 +47,37 @@ public sealed class ProfileSecurityTests
     }
 
     [Fact]
-    public async Task UpdateProfileAsync_PreservesExistingSmtpPassword_WhenIncomingPasswordIsEmpty()
+    public async Task UpdateProfileAsync_EncryptsNewPassword_AndPreservesExistingWhenEmpty()
     {
         await using var db = CreateContext();
-        db.Profiles.Add(new Profile
+        var service = new ProfileService(new WorkFlow(db), Protector);
+
+        var createResult = await service.CreateProfileAsync(new ProfileWriteDto
         {
-            Id = 2,
-            CompanyId = 1,
             Username = "admin",
             SmtpEmail = "old@empresa.com",
             SmtpPassword = "OriginalSecretPassword!"
-        });
-        await db.SaveChangesAsync();
+        }, companyId: 1);
 
-        var service = new ProfileService(new WorkFlow(db));
-        var update = new ProfileWriteDto
+        Assert.Equal(ServiceStatus.Created, createResult.Status);
+        var created = Assert.IsType<ProfileReadDto>(createResult.Payload);
+
+        var storedAfterCreate = await db.Profiles.AsNoTracking().FirstAsync(p => p.Id == created.Id);
+        Assert.NotEqual("OriginalSecretPassword!", storedAfterCreate.SmtpPassword);
+        Assert.True(Protector.IsProtected(storedAfterCreate.SmtpPassword));
+        Assert.Equal("OriginalSecretPassword!", Protector.Unprotect(storedAfterCreate.SmtpPassword!));
+
+        var updateResult = await service.UpdateProfileAsync(created.Id, new ProfileWriteDto
         {
-            Id = 2,
+            Id = created.Id,
             SmtpEmail = "new@empresa.com",
             SmtpPassword = ""
-        };
+        }, companyId: 1);
 
-        var result = await service.UpdateProfileAsync(2, update, companyId: 1);
+        Assert.Equal(ServiceStatus.NoContent, updateResult.Status);
 
-        Assert.Equal(ServiceStatus.NoContent, result.Status);
-
-        var stored = await db.Profiles.AsNoTracking().FirstAsync(p => p.Id == 2);
-        Assert.Equal("new@empresa.com", stored.SmtpEmail);
-        Assert.Equal("OriginalSecretPassword!", stored.SmtpPassword);
+        var storedAfterUpdate = await db.Profiles.AsNoTracking().FirstAsync(p => p.Id == created.Id);
+        Assert.Equal("new@empresa.com", storedAfterUpdate.SmtpEmail);
+        Assert.Equal("OriginalSecretPassword!", Protector.Unprotect(storedAfterUpdate.SmtpPassword!));
     }
 }

@@ -13,7 +13,7 @@ namespace InventoryAPI.Services
             {
                 var message = new Message()
                 {
-                    Token = fcmToken,
+                    Fid = fcmToken,
                     Notification = new Notification
                     {
                         Title = title,
