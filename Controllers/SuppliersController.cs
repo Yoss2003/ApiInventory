@@ -3,6 +3,7 @@ using InventoryAPI.Security;
 using InventoryAPI.Services;
 using InventoryAPI.Services.IServices;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace InventoryAPI.Controllers
 {
@@ -10,6 +11,7 @@ namespace InventoryAPI.Controllers
         ISupplierService supplierService,
         InventoryAccessPolicy access) : BaseApiController
     {
+        [EnableRateLimiting("external")]
         [HttpGet("ruc/{ruc}")]
         public async Task<IActionResult> ConsultarRuc(string ruc)
         {

@@ -1,6 +1,7 @@
 using InventoryAPI.Services.IServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace InventoryAPI.Controllers;
 
@@ -10,6 +11,7 @@ public sealed class PasswordRecoveryController(IPasswordRecoveryService recovery
     private bool IsValidDeveloper => EsDesarrollador && ObtenerUsuarioSeguro() > 0;
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth")]
     [HttpPost("request")]
     public async Task<IActionResult> RequestReset([FromBody] PasswordRecoveryRequestDto input) =>
         Accepted(await recoveryService.RequestResetAsync(input));

@@ -1,17 +1,17 @@
-using InventoryAPI.Models;
-using InventoryAPI.Data;
-using InventoryAPI.Repositories;
-using InventoryAPI.Repositories.IRepositories;
-using InventoryAPI.Services;
-using InventoryAPI.Services.IServices;
-using InventoryAPI.Security;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.IdentityModel.Tokens;
-using System.Text;
 using FirebaseAdmin;
 using Google.Apis.Auth.OAuth2;
-using System.Diagnostics;
+using InventoryAPI.Data;
+using InventoryAPI.Models;
+using InventoryAPI.Repositories;
+using InventoryAPI.Repositories.IRepositories;
+using InventoryAPI.Security;
+using InventoryAPI.Services;
+using InventoryAPI.Services.IServices;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,33 +19,56 @@ builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 
-// Add services to the container.
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+var jwtKey = builder.Configuration["Jwt:Key"];
+if (string.IsNullOrWhiteSpace(connectionString))
+    throw new InvalidOperationException("ConnectionStrings:DefaultConnection no está configurada.");
+if (string.IsNullOrWhiteSpace(jwtKey) || (!builder.Environment.IsDevelopment() && jwtKey.Length < 32))
+    throw new InvalidOperationException("Jwt:Key no está configurada o no cumple la longitud mínima de 32 caracteres.");
+
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
 
-// Tareas en segundo plano (Cron Jobs)
 builder.Services.AddHostedService<ApprovalCleanupService>();
-
-// Soporte para clientes HTTP (Necesario para consultar SUNAT)
 builder.Services.AddHttpClient();
-
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(connectionString));
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
-// Registro de WorkFlow
-builder.Services.AddScoped<IWorkFlow, WorkFlow>();
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-// Registro de TODOS los Servicios
+    options.AddPolicy("auth", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+
+    options.AddPolicy("external", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+});
+
+builder.Services.AddScoped<IWorkFlow, WorkFlow>();
 builder.Services.AddScoped<IPessimisticLockRepository, PessimisticLockRepository>();
 builder.Services.AddScoped<IAccountReceivableService, AccountReceivableService>();
 builder.Services.AddScoped<IActionItemService, ActionItemService>();
@@ -57,10 +80,8 @@ builder.Services.AddHttpClient<ICustomerService, CustomerService>(client => clie
 builder.Services.AddScoped<IDateFormatService, DateFormatService>();
 builder.Services.AddScoped<IEmployeeService, EmployeeService>();
 builder.Services.AddScoped<IExportRouteService, ExportRouteService>();
-
 builder.Services.AddHttpClient<IExchangeRateService, ExchangeRateService>();
 builder.Services.AddHttpClient<ISupplierService, SupplierService>();
-
 builder.Services.AddScoped<IHistoryLogService, HistoryLogService>();
 builder.Services.AddScoped<IInstallmentPaymentService, InstallmentPaymentService>();
 builder.Services.AddScoped<IInventoryService, InventoryService>();
@@ -81,16 +102,13 @@ builder.Services.AddScoped<ITimeZoneItemService, TimeZoneItemService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ICompanyLicenseService, CompanyLicenseService>();
 builder.Services.AddScoped<InventoryAccessPolicy>();
-
 builder.Services.AddScoped<IRolePermissionService, RolePermissionService>();
 builder.Services.AddScoped<ICategoryMeasurementUnitService, CategoryMeasurementUnitService>();
 builder.Services.AddScoped<ISharedInventoryService, SharedInventoryService>();
 builder.Services.AddScoped<ISaleDetailService, SaleDetailService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<IEmployeePermissionService, EmployeePermissionService>();
-
 builder.Services.AddScoped<IFcmNotificationService, FcmNotificationService>();
-
 builder.Services.AddScoped<IInventoryScopeService, InventoryScopeService>();
 builder.Services.AddScoped<IManagedUserRegistration, ManagedUserRegistration>();
 builder.Services.AddScoped<IUserCredentialMailer, UserCredentialMailer>();
@@ -118,70 +136,72 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
-        }; 
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+        };
         options.Events = new JwtBearerEvents
         {
-            OnTokenValidated = InventoryAPI.Security.SessionSecurityValidator.ValidateAsync
+            OnTokenValidated = SessionSecurityValidator.ValidateAsync
         };
-
     });
 
-try
-{
-    var firebaseKeyPath = Path.Combine(builder.Environment.ContentRootPath, "firebase-key.json");
-
-    if (File.Exists(firebaseKeyPath))
-    {
-        string jsonCreds = File.ReadAllText(firebaseKeyPath);
-
-    #pragma warning disable CS0618
-        FirebaseApp.Create(new AppOptions()
-        {
-            Credential = GoogleCredential.FromJson(jsonCreds)
-        });
-    #pragma warning restore CS0618
-    }
-    else
-    {
-        Debug.WriteLine($"[FCM WARNING]: Archivo no encontrado en {firebaseKeyPath}");
-    }
-}
-catch (Exception ex)
-{
-    Debug.WriteLine($"[FCM ERROR CRÍTICO]: {ex.Message}");
-}
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+if (allowedOrigins.Length == 0 && builder.Environment.IsDevelopment())
+    allowedOrigins = ["http://localhost:4200"];
 
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAngularApp",
-        policy =>
+    options.AddPolicy("AllowAngularApp", policy =>
+    {
+        if (allowedOrigins.Length > 0)
         {
-            policy.WithOrigins("http://localhost:4200")
+            policy.WithOrigins(allowedOrigins)
                   .AllowAnyHeader()
                   .AllowAnyMethod();
-        });
+        }
+    });
 });
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-app.UseSwagger();
-app.UseSwaggerUI();
+try
+{
+    var firebaseKeyPath = Path.Combine(app.Environment.ContentRootPath, "firebase-key.json");
+    if (File.Exists(firebaseKeyPath))
+    {
+        string jsonCreds = File.ReadAllText(firebaseKeyPath);
+#pragma warning disable CS0618
+        FirebaseApp.Create(new AppOptions
+        {
+            Credential = GoogleCredential.FromJson(jsonCreds)
+        });
+#pragma warning restore CS0618
+    }
+    else
+    {
+        app.Logger.LogWarning("Archivo de credenciales Firebase no encontrado en {Path}.", firebaseKeyPath);
+    }
+}
+catch (Exception ex)
+{
+    app.Logger.LogError(ex, "Error crítico al inicializar Firebase.");
+}
+
 if (app.Environment.IsDevelopment())
 {
+    app.UseSwagger();
+    app.UseSwaggerUI();
     app.UseDeveloperExceptionPage();
 }
 else
 {
     app.UseExceptionHandler();
+    app.UseHttpsRedirection();
 }
 
 app.UseStaticFiles();
 app.UseRouting();
-//app.UseHttpsRedirection();
 app.UseCors("AllowAngularApp");
-
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 
@@ -193,9 +213,8 @@ using (var scope = app.Services.CreateScope())
     try
     {
         var context = services.GetRequiredService<AppDbContext>();
-        context.Database.Migrate(); // Aplica las tablas
+        context.Database.Migrate();
 
-        // 🚀 LA MAGIA DEL SEEDING: Si no hay empresas, creamos la primera
         if (!context.Companies.Any())
         {
             var defaultCompany = new Company
@@ -211,10 +230,9 @@ using (var scope = app.Services.CreateScope())
             context.Companies.Add(defaultCompany);
             context.SaveChanges();
 
-            int SUPER_ADMIN_ROLE_ID = 1;
-
+            const int superAdminRoleId = 1;
             var superAdmins = context.Users
-                .Where(u => u.CompanyId == null && u.RoleId == SUPER_ADMIN_ROLE_ID)
+                .Where(u => u.CompanyId == null && u.RoleId == superAdminRoleId)
                 .ToList();
 
             foreach (var admin in superAdmins)
@@ -224,17 +242,8 @@ using (var scope = app.Services.CreateScope())
             context.SaveChanges();
         }
 
-        // Idempotente: aprovisiona el maestro y el inventario personal
-        // para empresas/usuarios anteriores a la Fase 3.5 (incluido YosMG).
-        // Restauraciones antiguas pueden tener secuencias de usuarios/empleados/inventarios atrasadas.
         InventoryProvisioner.EnsureExistingAsync(context).GetAwaiter().GetResult();
 
-        // Catálogo de permisos compatible con registros existentes; no se alteran
-        // permisos ya asignados a los roles.
-        // Algunas bases restauradas desde MAUI/SQL tienen los IDs conservados,
-        // pero la secuencia identity de PostgreSQL sigue en un valor anterior.
-        // Sin sincronizarla, SaveChanges provoca 23505 PK_Permissions.
-        // El bloqueo serializa semillas simultáneas y evita IDs duplicados.
         using (var permissionsTx = context.Database.BeginTransaction())
         {
             context.Database.ExecuteSqlRaw(
@@ -247,7 +256,6 @@ using (var scope = app.Services.CreateScope())
                     IF identity_sequence IS NULL THEN
                         RAISE EXCEPTION 'No se encontró la secuencia de Permissions.Id';
                     END IF;
-                    -- Avanzar la secuencia sin retrocederla: MAX(Id) o su próximo valor.
                     PERFORM setval(identity_sequence,
                         GREATEST(
                             COALESCE((SELECT MAX("Id") FROM "Permissions"), 0),
@@ -267,13 +275,10 @@ using (var scope = app.Services.CreateScope())
                     context.Permissions.Add(new Permission { SystemCode = code, Name = label });
             }
             context.SaveChanges();
-            // La primera vez que se añade VIEW_USERS, los administradores conservan
-            // la capacidad de ver/editar personal. Luego el desarrollador puede
-            // revocar cualquiera de estas capacidades desde su editor de roles.
+
             if (initialViewUsersSeed && context.Roles.Any(r => r.Id == 2))
             {
-                var codes = new[] { InventoryPermissionCodes.ViewUsers,
-                                    InventoryPermissionCodes.ManageUsers };
+                var codes = new[] { InventoryPermissionCodes.ViewUsers, InventoryPermissionCodes.ManageUsers };
                 var ids = context.Permissions.Where(p => codes.Contains(p.SystemCode))
                     .Select(p => p.Id).ToList();
                 var existingIds = context.RolePermissions.Where(p => p.RoleId == 2)
@@ -290,13 +295,10 @@ using (var scope = app.Services.CreateScope())
     {
         var logger = services.GetRequiredService<ILogger<Program>>();
         logger.LogError(ex, "Ocurrió un error al aplicar las migraciones o preparar los inventarios.");
-        // No publicar una API aparentemente sana con el inventario maestro sin crear.
         throw;
     }
 }
 
-// Ejecución puntual para trasladar archivos existentes: nunca al arrancar normal.
-// Mantiene los originales para que el propietario pueda revisar el resultado.
 if (args.Contains("--migrate-private-media", StringComparer.OrdinalIgnoreCase))
 {
     using var migrationScope = app.Services.CreateScope();

@@ -39,4 +39,10 @@
 	  </Content>
 	</ItemGroup>
 
+	<ItemGroup>
+		<Compile Remove="InventoryAPI.Tests\**" />
+		<Content Remove="InventoryAPI.Tests\**" />
+		<EmbeddedResource Remove="InventoryAPI.Tests\**" />
+		<None Remove="InventoryAPI.Tests\**" />
+	</ItemGroup>
 </Project>

@@ -4,6 +4,7 @@ using InventoryAPI.Security;
 using InventoryAPI.Services.IServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace InventoryAPI.Controllers
 {
@@ -110,6 +111,7 @@ namespace InventoryAPI.Controllers
             return success ? NoContent() : NotFound();
         }
 
+        [EnableRateLimiting("auth")]
         [HttpPost("Login")]
         [AllowAnonymous]
         public async Task<IActionResult> Login([FromBody] LoginRequestDTO request)
