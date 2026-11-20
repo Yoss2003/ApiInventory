@@ -1,38 +1,15 @@
-﻿using Microsoft.AspNetCore.Mvc;
 using InventoryAPI.Services.IServices;
+using Microsoft.AspNetCore.Mvc;
 
-namespace InventoryAPI.Controllers
+namespace InventoryAPI.Controllers;
+
+public sealed class ExchangeRatesController(IExchangeRateService exchangeRateService) : BaseApiController
 {
-    public class ExchangeRatesController(IExchangeRateService exchangeRateService) : BaseApiController
-    {
-        private readonly IExchangeRateService _exchangeRateService = exchangeRateService;
+    [HttpGet]
+    public async Task<IActionResult> GetExchangeRates() =>
+        Ok(await exchangeRateService.GetAllAsync());
 
-        [HttpGet]
-        public async Task<IActionResult> GetExchangeRates()
-        {
-            try
-            {
-                var rates = await _exchangeRateService.GetAllAsync();
-                return Ok(rates);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error interno: {ex.Message}");
-            }
-        }
-
-        [HttpGet("today/{currency?}")]
-        public async Task<IActionResult> GetTodayExchangeRate(string? currency)
-        {
-            try
-            {
-                var exchangeRate = await _exchangeRateService.GetTodayExchangeRateAsync(currency);
-                return Ok(exchangeRate);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, new { error = "Error interno al procesar el tipo de cambio.", detalle = ex.Message });
-            }
-        }
-    }
+    [HttpGet("today/{currency?}")]
+    public async Task<IActionResult> GetTodayExchangeRate(string? currency) =>
+        Ok(await exchangeRateService.GetTodayExchangeRateAsync(currency));
 }
