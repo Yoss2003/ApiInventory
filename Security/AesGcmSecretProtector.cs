@@ -47,8 +47,14 @@ public sealed class AesGcmSecretProtector : ISecretProtector
         if (string.IsNullOrEmpty(storedValue))
             return string.Empty;
 
-        if (IsProtected(storedValue) && TryUnprotect(storedValue, out _))
+        if (IsProtected(storedValue))
+        {
+            if (!TryUnprotect(storedValue, out _))
+                throw new CryptographicException(
+                    "Un secreto tiene el prefijo de cifrado, pero no puede autenticarse. Verifica la clave y el dato antes de continuar con la migración.");
+
             return storedValue;
+        }
 
         return Protect(storedValue);
     }
