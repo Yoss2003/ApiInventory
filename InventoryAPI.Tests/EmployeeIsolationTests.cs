@@ -1,5 +1,6 @@
 ﻿using InventoryAPI.Data;
 using InventoryAPI.Models;
+using InventoryAPI.Models.DTO;
 using InventoryAPI.Repositories;
 using InventoryAPI.Services;
 using Microsoft.EntityFrameworkCore;
@@ -54,10 +55,9 @@ public sealed class EmployeeIsolationTests
         await db.SaveChangesAsync();
 
         var service = new EmployeeService(new WorkFlow(db));
-        var tampered = new Employee
+        var tampered = new EmployeeWriteDto
         {
             Id = 20,
-            CompanyId = 2,
             FirstName = "Hackeado",
             LastName = "Externo",
             DNI = "00000000"

@@ -1,5 +1,6 @@
 using InventoryAPI.Data;
 using InventoryAPI.Models;
+using InventoryAPI.Models.DTO;
 using InventoryAPI.Repositories;
 using InventoryAPI.Repositories.IRepositories;
 using InventoryAPI.Services.IServices;
@@ -17,6 +18,93 @@ namespace InventoryAPI.Services
         IWorkFlow workFlow, HttpClient httpClient, IDecolectaTokenProvider decolectaTokens)
         : WorkContainer<Customer>(workFlow), ICustomerService
     {
+        private static CustomerReadDto ToReadDto(Customer c) => new(
+            c.Id,
+            c.DocumentNumber,
+            c.Name,
+            c.Phone,
+            c.Email,
+            c.Address,
+            c.RegistrationDate,
+            c.IsActive,
+            c.CompanyId,
+            c.Initial);
+
+        public async Task<List<CustomerReadDto>> GetCustomersByCompanyAsync(int companyId)
+        {
+            var customers = await _workFlow.Repository<Customer>()
+                .Query(asNoTracking: true)
+                .Where(c => c.CompanyId == companyId && c.IsActive)
+                .ToListAsync();
+
+            return [.. customers.Select(ToReadDto)];
+        }
+
+        public async Task<CustomerReadDto?> GetCustomerByIdAsync(int id, int companyId)
+        {
+            var customer = await _workFlow.Repository<Customer>()
+                .Query(asNoTracking: true)
+                .FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == companyId && c.IsActive);
+
+            return customer is null ? null : ToReadDto(customer);
+        }
+
+        public async Task<ServiceResult> CreateCustomerAsync(CustomerWriteDto dto, int companyId)
+        {
+            var customer = new Customer
+            {
+                DocumentNumber = dto.DocumentNumber?.Trim(),
+                Name = dto.Name.Trim(),
+                Phone = dto.Phone?.Trim(),
+                Email = dto.Email?.Trim(),
+                Address = dto.Address?.Trim(),
+                RegistrationDate = dto.RegistrationDate?.Trim(),
+                CompanyId = companyId,
+                IsActive = true
+            };
+
+            if (!await CreateAsync(customer))
+                return ServiceResult.BadRequest("No se pudo crear el cliente.");
+
+            return ServiceResult.Created(ToReadDto(customer));
+        }
+
+        public async Task<ServiceResult> UpdateCustomerAsync(int id, CustomerWriteDto dto, int companyId)
+        {
+            if (id != dto.Id) return ServiceResult.BadRequest("El ID no coincide.");
+
+            var existing = await _workFlow.Repository<Customer>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == companyId && c.IsActive);
+
+            if (existing is null) return ServiceResult.NotFound();
+
+            existing.DocumentNumber = dto.DocumentNumber?.Trim();
+            existing.Name = dto.Name.Trim();
+            existing.Phone = dto.Phone?.Trim();
+            existing.Email = dto.Email?.Trim();
+            existing.Address = dto.Address?.Trim();
+            existing.RegistrationDate = dto.RegistrationDate?.Trim();
+
+            _workFlow.Repository<Customer>().Update(existing);
+            await _workFlow.CompleteAsync();
+            return ServiceResult.NoContent();
+        }
+
+        public async Task<ServiceResult> DeleteCustomerAsync(int id, int companyId, string deletedBy)
+        {
+            var existing = await _workFlow.Repository<Customer>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == companyId && c.IsActive);
+
+            if (existing is null) return ServiceResult.NotFound();
+
+            existing.IsActive = false;
+            _workFlow.Repository<Customer>().Update(existing);
+            await _workFlow.CompleteAsync();
+            return ServiceResult.NoContent();
+        }
+
         public async Task<(bool IsSuccess, string DataOrError)> ConsultarDniExternoAsync(string dni)
         {
             if (!Regex.IsMatch(dni ?? string.Empty, @"^[0-9]{8}$"))

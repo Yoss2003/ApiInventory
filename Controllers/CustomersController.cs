@@ -1,5 +1,6 @@
-﻿using InventoryAPI.Models;
+﻿using InventoryAPI.Models.DTO;
 using InventoryAPI.Security;
+using InventoryAPI.Services;
 using InventoryAPI.Services.IServices;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -18,7 +19,7 @@ namespace InventoryAPI.Controllers
             var companyId = ObtenerEmpresaSegura();
             if (companyId <= 0) return Unauthorized();
 
-            return Ok(await customerService.GetAllByCompanyIdAsync(companyId));
+            return Ok(await customerService.GetCustomersByCompanyAsync(companyId));
         }
 
         [HttpGet("{id:int}")]
@@ -28,46 +29,34 @@ namespace InventoryAPI.Controllers
             var companyId = ObtenerEmpresaSegura();
             if (companyId <= 0) return Unauthorized();
 
-            var customer = await customerService.GetByIdAsync(id);
-            if (customer is null || customer.CompanyId != companyId) return NotFound();
-
-            return Ok(customer);
+            var customer = await customerService.GetCustomerByIdAsync(id, companyId);
+            return customer is null ? NotFound() : Ok(customer);
         }
 
         [HttpPut("{id:int}")]
-        public async Task<IActionResult> PutCustomer(int id, [FromBody] Customer customer)
+        public async Task<IActionResult> PutCustomer(int id, [FromBody] CustomerWriteDto customer)
         {
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
-            if (id != customer.Id) return BadRequest(new { error = "El ID no coincide." });
             if (!ModelState.IsValid) return BadRequest(ModelState);
-
             var companyId = ObtenerEmpresaSegura();
             if (companyId <= 0) return Unauthorized();
 
-            var existingCustomer = await customerService.GetByIdAsync(id);
-            if (existingCustomer is null || existingCustomer.CompanyId != companyId) return NotFound();
-
-            customer.CompanyId = companyId;
-            var success = await customerService.UpdateAsync(customer);
-            return success ? NoContent() : BadRequest(new { error = "No se pudo actualizar el cliente." });
+            return FromServiceResult(await customerService.UpdateCustomerAsync(id, customer, companyId));
         }
 
         [HttpPost]
-        public async Task<ActionResult<Customer>> PostCustomer([FromBody] Customer customer)
+        public async Task<IActionResult> PostCustomer([FromBody] CustomerWriteDto customer)
         {
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
             if (!ModelState.IsValid) return BadRequest(ModelState);
-
             var companyId = ObtenerEmpresaSegura();
             if (companyId <= 0) return Unauthorized();
 
-            customer.Id = 0;
-            customer.CompanyId = companyId;
+            var result = await customerService.CreateCustomerAsync(customer, companyId);
+            if (result.Status == ServiceStatus.Created && result.Payload is CustomerReadDto created)
+                return CreatedAtAction(nameof(GetCustomer), new { id = created.Id }, created);
 
-            var success = await customerService.CreateAsync(customer);
-            if (!success) return BadRequest(new { error = "No se pudo crear el cliente." });
-
-            return CreatedAtAction(nameof(GetCustomer), new { id = customer.Id }, customer);
+            return FromServiceResult(result);
         }
 
         [HttpDelete("{id:int}")]
@@ -76,11 +65,7 @@ namespace InventoryAPI.Controllers
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
             if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
 
-            var existingCustomer = await customerService.GetByIdAsync(id);
-            if (existingCustomer is null || existingCustomer.CompanyId != companyId) return NotFound();
-
-            var success = await customerService.DeleteAsync(id, userId.ToString());
-            return success ? NoContent() : BadRequest(new { error = "No se pudo eliminar el cliente." });
+            return FromServiceResult(await customerService.DeleteCustomerAsync(id, companyId, userId.ToString()));
         }
 
         [HttpGet("dni/{dni}")]

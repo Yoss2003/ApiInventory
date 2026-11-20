@@ -1,5 +1,4 @@
-﻿using InventoryAPI.Models;
-using InventoryAPI.Models.DTO;
+﻿using InventoryAPI.Models.DTO;
 using InventoryAPI.Security;
 using InventoryAPI.Services;
 using InventoryAPI.Services.IServices;
@@ -18,7 +17,7 @@ namespace InventoryAPI.Controllers
             var companyId = ObtenerEmpresaSegura();
             if (companyId <= 0) return Unauthorized();
 
-            return Ok(await employeeService.GetAllByCompanyIdAsync(companyId));
+            return Ok(await employeeService.GetEmployeesByCompanyAsync(companyId));
         }
 
         [HttpGet("{id:int}")]
@@ -33,7 +32,7 @@ namespace InventoryAPI.Controllers
         }
 
         [HttpPut("{id:int}")]
-        public async Task<IActionResult> PutEmployee(int id, [FromBody] Employee employee)
+        public async Task<IActionResult> PutEmployee(int id, [FromBody] EmployeeWriteDto employee)
         {
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
             if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -54,7 +53,7 @@ namespace InventoryAPI.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> PostEmployee([FromBody] Employee employee)
+        public async Task<IActionResult> PostEmployee([FromBody] EmployeeWriteDto employee)
         {
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
             if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -62,7 +61,7 @@ namespace InventoryAPI.Controllers
             if (companyId <= 0) return Unauthorized();
 
             var result = await employeeService.CreateInCompanyAsync(employee, companyId);
-            if (result.Status == ServiceStatus.Created && result.Payload is Employee created)
+            if (result.Status == ServiceStatus.Created && result.Payload is EmployeeReadDto created)
                 return CreatedAtAction(nameof(GetEmployee), new { id = created.Id }, created);
 
             return FromServiceResult(result);

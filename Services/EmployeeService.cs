@@ -9,22 +9,25 @@ namespace InventoryAPI.Services
 {
     public class EmployeeService(IWorkFlow workFlow) : WorkContainer<Employee>(workFlow), IEmployeeService
     {
-        public override async Task<IEnumerable<Employee>> GetAllAsync()
-        {
-            var activeEmployees = await _workFlow.Repository<Employee>()
-                .Query(asNoTracking: true)
-                .Include(e => e.User)
-                .Where(e => e.IsActive)
-                .ToListAsync();
+        private static EmployeeReadDto ToReadDto(Employee e) => new(
+            e.Id,
+            e.UserId,
+            e.FirstName,
+            e.LastName,
+            e.DNI,
+            e.Age,
+            e.BirthDate,
+            e.JobPositionId,
+            e.AreaId,
+            e.HireDate,
+            e.ContractTypeId,
+            e.StatusId,
+            e.CompanyId,
+            e.User?.ProfilePictureUrl ?? e.PictureUrl,
+            e.IsActive,
+            e.Initial);
 
-            foreach (var emp in activeEmployees)
-            {
-                if (emp.User != null) emp.PictureUrl = emp.User.ProfilePictureUrl;
-            }
-            return activeEmployees;
-        }
-
-        public override async Task<IEnumerable<Employee>> GetAllByCompanyIdAsync(int companyId)
+        public async Task<List<EmployeeReadDto>> GetEmployeesByCompanyAsync(int companyId)
         {
             var activeEmployees = await _workFlow.Repository<Employee>()
                 .Query(asNoTracking: true)
@@ -32,48 +35,56 @@ namespace InventoryAPI.Services
                 .Where(e => e.CompanyId == companyId && e.IsActive)
                 .ToListAsync();
 
-            foreach (var emp in activeEmployees)
-            {
-                if (emp.User != null) emp.PictureUrl = emp.User.ProfilePictureUrl;
-            }
-            return activeEmployees;
+            return [.. activeEmployees.Select(ToReadDto)];
         }
 
-        public async Task<Employee?> GetByIdInCompanyAsync(int id, int companyId)
+        public async Task<EmployeeReadDto?> GetByIdInCompanyAsync(int id, int companyId)
         {
             var emp = await _workFlow.Repository<Employee>()
                 .Query(asNoTracking: true)
                 .Include(e => e.User)
                 .FirstOrDefaultAsync(e => e.Id == id && e.CompanyId == companyId);
 
-            if (emp?.User != null) emp.PictureUrl = emp.User.ProfilePictureUrl;
-            return emp;
+            return emp is null ? null : ToReadDto(emp);
         }
 
-        public async Task<ServiceResult> CreateInCompanyAsync(Employee employee, int companyId)
+        public async Task<ServiceResult> CreateInCompanyAsync(EmployeeWriteDto dto, int companyId)
         {
-            employee.Id = 0;
-            employee.CompanyId = companyId;
-            employee.IsActive = true;
-
-            if (employee.UserId.HasValue && employee.UserId.Value > 0)
+            if (dto.UserId.HasValue && dto.UserId.Value > 0)
             {
                 var userInCompany = await _workFlow.Repository<User>()
                     .Query(asNoTracking: true)
-                    .AnyAsync(u => u.Id == employee.UserId.Value && u.CompanyId == companyId);
+                    .AnyAsync(u => u.Id == dto.UserId.Value && u.CompanyId == companyId);
                 if (!userInCompany)
                     return ServiceResult.BadRequest("El usuario vinculado no pertenece a esta empresa.");
             }
 
+            var employee = new Employee
+            {
+                UserId = dto.UserId,
+                FirstName = dto.FirstName?.Trim(),
+                LastName = dto.LastName?.Trim(),
+                DNI = dto.DNI?.Trim(),
+                Age = dto.Age,
+                BirthDate = dto.BirthDate?.Trim(),
+                JobPositionId = dto.JobPositionId,
+                AreaId = dto.AreaId,
+                HireDate = dto.HireDate?.Trim(),
+                ContractTypeId = dto.ContractTypeId,
+                StatusId = dto.StatusId,
+                CompanyId = companyId,
+                IsActive = true
+            };
+
             if (!await CreateAsync(employee))
                 return ServiceResult.BadRequest("No se pudo crear el empleado.");
 
-            return ServiceResult.Created(employee);
+            return ServiceResult.Created(ToReadDto(employee));
         }
 
-        public async Task<ServiceResult> UpdateInCompanyAsync(int id, Employee employee, int companyId)
+        public async Task<ServiceResult> UpdateInCompanyAsync(int id, EmployeeWriteDto dto, int companyId)
         {
-            if (id != employee.Id) return ServiceResult.BadRequest("El ID no coincide.");
+            if (id != dto.Id) return ServiceResult.BadRequest("El ID no coincide.");
 
             var existingEmployee = await _workFlow.Repository<Employee>()
                 .Query(asNoTracking: false)
@@ -81,11 +92,15 @@ namespace InventoryAPI.Services
 
             if (existingEmployee is null) return ServiceResult.NotFound();
 
-            existingEmployee.FirstName = employee.FirstName;
-            existingEmployee.LastName = employee.LastName;
-            existingEmployee.DNI = employee.DNI;
-            existingEmployee.JobPositionId = employee.JobPositionId;
-            existingEmployee.AreaId = employee.AreaId;
+            existingEmployee.FirstName = dto.FirstName?.Trim();
+            existingEmployee.LastName = dto.LastName?.Trim();
+            existingEmployee.DNI = dto.DNI?.Trim();
+            existingEmployee.Age = dto.Age;
+            existingEmployee.BirthDate = dto.BirthDate?.Trim();
+            existingEmployee.JobPositionId = dto.JobPositionId;
+            existingEmployee.AreaId = dto.AreaId;
+            existingEmployee.HireDate = dto.HireDate?.Trim();
+            existingEmployee.ContractTypeId = dto.ContractTypeId;
 
             _workFlow.Repository<Employee>().Update(existingEmployee);
             await _workFlow.CompleteAsync();
@@ -104,9 +119,9 @@ namespace InventoryAPI.Services
             if (employeeDb is null)
                 return ServiceResult.NotFound("Empleado no encontrado en tu empresa.");
 
-            employeeDb.FirstName = dto.Employee.FirstName;
-            employeeDb.LastName = dto.Employee.LastName;
-            employeeDb.DNI = dto.Employee.DNI;
+            employeeDb.FirstName = dto.Employee.FirstName?.Trim();
+            employeeDb.LastName = dto.Employee.LastName?.Trim();
+            employeeDb.DNI = dto.Employee.DNI?.Trim();
             employeeDb.JobPositionId = dto.Employee.JobPositionId;
             employeeDb.AreaId = dto.Employee.AreaId;
 
@@ -144,23 +159,6 @@ namespace InventoryAPI.Services
             _workFlow.Repository<Employee>().Update(existingEmployee);
             await _workFlow.CompleteAsync();
             return ServiceResult.NoContent();
-        }
-
-        public override async Task<bool> UpdateAsync(Employee employee)
-        {
-            var existingEmployee = await _workFlow.Repository<Employee>()
-                .Query(asNoTracking: false)
-                .FirstOrDefaultAsync(e => e.Id == employee.Id && e.CompanyId == employee.CompanyId);
-            if (existingEmployee == null) return false;
-
-            existingEmployee.FirstName = employee.FirstName;
-            existingEmployee.LastName = employee.LastName;
-            existingEmployee.DNI = employee.DNI;
-            existingEmployee.JobPositionId = employee.JobPositionId;
-            existingEmployee.AreaId = employee.AreaId;
-
-            _workFlow.Repository<Employee>().Update(existingEmployee);
-            return await _workFlow.CompleteAsync() > 0;
         }
 
         public async Task<(bool Success, string Message)> UpdateEmployeeWithUserAsync(int id, EmployeeUpdateDTO dto)
