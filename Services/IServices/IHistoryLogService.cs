@@ -6,5 +6,5 @@ namespace InventoryAPI.Services.IServices;
 public interface IHistoryLogService : IWorkContainer<HistoryLog>
 {
     Task<HistoryLog?> GetByIdInCompanyAsync(int id, int companyId);
-    Task<bool> CreateInCompanyAsync(HistoryLog log, int companyId, int userId);
+    Task<bool> CreateInCompanyAsync(HistoryLog log, int companyId, int userId, bool isDeveloper);
 }
