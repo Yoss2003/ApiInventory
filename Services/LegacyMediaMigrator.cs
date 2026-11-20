@@ -12,7 +12,7 @@ namespace InventoryAPI.Services;
 /// </summary>
 public sealed class LegacyMediaMigrator(
     AppDbContext db,
-    PrivateMediaStorage storage,
+    IPrivateMediaStorage storage,
     IConfiguration config,
     IWebHostEnvironment environment,
     ILogger<LegacyMediaMigrator> logger) : ILegacyMediaMigrator
