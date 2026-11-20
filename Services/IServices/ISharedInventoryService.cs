@@ -1,10 +1,9 @@
-﻿using InventoryAPI.Models;
+using InventoryAPI.Models;
 using InventoryAPI.Repositories.IRepositories;
 
-namespace InventoryAPI.Services.IServices
+namespace InventoryAPI.Services.IServices;
+
+public interface ISharedInventoryService : IWorkContainer<SharedInventory>
 {
-    public interface ISharedInventoryService : IWorkContainer<SharedInventory>
-    {
-        Task<List<SharedInventoryDTO>> GetSharedWithUsersAsync(int inventoryId);
-    }
+    Task<List<SharedInventoryDTO>> GetSharedWithUsersAsync(int inventoryId, int companyId);
 }
