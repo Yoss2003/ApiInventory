@@ -39,6 +39,7 @@ public sealed class ParametersController(
     [HttpPost]
     public async Task<IActionResult> PostParameter([FromBody] Parameters input)
     {
+        if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
         if (!ModelState.IsValid) return BadRequest(ModelState);
         if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
 
@@ -54,8 +55,9 @@ public sealed class ParametersController(
     {
         if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
         if (!ModelState.IsValid) return BadRequest(ModelState);
+        if (!TryObtenerAmbito(out var companyId, out _)) return Unauthorized();
 
-        var result = await parametersService.UpdateParameterAsync(id, input, ObtenerEmpresaSegura());
+        var result = await parametersService.UpdateParameterAsync(id, input, companyId);
         return FromServiceResult(result);
     }
 
@@ -63,7 +65,8 @@ public sealed class ParametersController(
     public async Task<IActionResult> DeleteParameter(int id)
     {
         if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
-        var result = await parametersService.DeleteParameterAsync(id, ObtenerEmpresaSegura());
+        if (!TryObtenerAmbito(out var companyId, out _)) return Unauthorized();
+        var result = await parametersService.DeleteParameterAsync(id, companyId);
         return FromServiceResult(result);
     }
 }
