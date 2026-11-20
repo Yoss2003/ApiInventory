@@ -38,6 +38,7 @@ public sealed class PasswordRecoveryController(IPasswordRecoveryService recovery
     }
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth")]
     [HttpPost("complete")]
     public async Task<IActionResult> Complete([FromBody] PasswordRecoveryCompleteDto input) =>
         FromServiceResult(await recoveryService.CompleteAsync(input));
