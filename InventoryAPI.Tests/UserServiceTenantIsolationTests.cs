@@ -111,6 +111,9 @@ public sealed class UserServiceTenantIsolationTests
         var result = await service.ApproveEmployeeAsync(41, companyId: 2);
 
         Assert.True(result.Success);
+
+        var resend = await service.ResendWelcomeEmailAsync(41, companyId: 2);
+        Assert.False(resend.Success);
         Assert.False(protector.UnprotectWasCalled);
         Assert.Equal(1, await db.Users.Where(u => u.Id == 41 && u.StatusId == 1).CountAsync());
     }
