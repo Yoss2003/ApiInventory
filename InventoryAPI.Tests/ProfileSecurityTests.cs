@@ -76,4 +76,16 @@ public sealed class ProfileSecurityTests
         var otherProtector = new AesGcmSecretProtector("CompletelyDifferentKeyWith32CharsMinimum!!");
         Assert.False(otherProtector.TryUnprotect(storedAfterCreate.SmtpPassword, out _));
     }
+    [Fact]
+    public void ProtectStoredValue_RejectsCiphertextThatCannotBeAuthenticated()
+    {
+        var encrypted = Protector.Protect("SMTP-secret-123!");
+        var tampered = encrypted[..^2] + "AA";
+
+        Assert.Throws<CryptographicException>(() => Protector.ProtectStoredValue(tampered));
+
+        var wrongKeyProtector = new AesGcmSecretProtector("AnotherMasterEncryptionKeyWith32Chars!");
+        Assert.Throws<CryptographicException>(() => wrongKeyProtector.ProtectStoredValue(encrypted));
+    }
+
 }
