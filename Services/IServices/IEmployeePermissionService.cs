@@ -6,5 +6,6 @@ namespace InventoryAPI.Services.IServices
     public interface IEmployeePermissionService : IWorkContainer<EmployeePermission>
     {
         Task<EmployeePermission?> GetByUserIdAndCompanyAsync(int userId, int companyId);
+        Task<ServiceResult> UpdateAuthorizedAsync(int id, EmployeePermission permissions, int companyId);
     }
 }

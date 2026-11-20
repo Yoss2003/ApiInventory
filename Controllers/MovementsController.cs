@@ -1,152 +1,73 @@
-using Microsoft.AspNetCore.Mvc;
+using InventoryAPI.Models;
 using InventoryAPI.Services;
 using InventoryAPI.Services.IServices;
-using InventoryAPI.Models;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Mvc;
 
-namespace InventoryAPI.Controllers
+namespace InventoryAPI.Controllers;
+
+public sealed class MovementsController(IMovementService movementService) : BaseApiController
 {
-    public class MovementsController(IMovementService movementService, InventoryAPI.Data.AppDbContext db) : BaseApiController
+    [HttpGet("master/history")]
+    public async Task<IActionResult> MasterHistory(
+        [FromQuery] int? inventoryId = null,
+        [FromQuery] int? userId = null,
+        [FromQuery] int? actorUserId = null,
+        [FromQuery] int? actionId = null,
+        [FromQuery(Name = "from")] DateTimeOffset? fromDate = null,
+        [FromQuery(Name = "to")] DateTimeOffset? toDate = null,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50)
     {
-        private bool IsDeveloper => User.FindFirst("RoleId")?.Value == "1";
-        private readonly IMovementService _movementService = movementService;
+        if (!EsDesarrollador && !EsAdministrador) return Forbid();
+        var companyId = ObtenerEmpresaSegura();
+        if (companyId <= 0) return Unauthorized();
 
-        private IQueryable<int> AccessibleInventories(int companyId, int userId, bool edit = false) =>
-            db.Inventories.Where(i => i.CompanyId == companyId &&
-                (IsDeveloper || i.UserId == userId || db.SharedInventories.Any(sh =>
-                  sh.InventoryId == i.Id && sh.CompanyId == companyId && sh.UserId == userId &&
-                  (!edit || sh.AccessLevel == SharedInventory.AccessMode.Editor)))).Select(i => i.Id);
+        var result = await movementService.GetMasterHistoryAsync(
+            companyId, inventoryId, userId, actorUserId, actionId, fromDate, toDate, page, pageSize);
+        return FromServiceResult(result);
+    }
 
-        // Vista administrativa de entradas, salidas y custodias de inventarios personales.
-        // Consulta los movimientos originales; no copia filas al inventario maestro.
-        [HttpGet("master/history")]
-        public async Task<IActionResult> MasterHistory(
-            [FromQuery] int? inventoryId = null,
-            [FromQuery] int? userId = null,
-            [FromQuery] int? actorUserId = null,
-            [FromQuery] int? actionId = null,
-            [FromQuery(Name = "from")] DateTimeOffset? fromDate = null,
-            [FromQuery(Name = "to")] DateTimeOffset? toDate = null,
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 50)
-        {
-            if (User.FindFirst("RoleId")?.Value is not ("1" or "2")) return Forbid();
-            int companyId = ObtenerEmpresaSegura();
-            if (companyId <= 0) return Unauthorized();
-            if (actionId.HasValue && actionId.Value is not (1 or 2 or 3))
-                return BadRequest(new { error = "Tipo válido: 1 entrada, 2 salida, 3 custodia." });
-            if (fromDate.HasValue && toDate.HasValue && fromDate > toDate)
-                return BadRequest(new { error = "El rango de fechas no es válido." });
+    [HttpGet]
+    public async Task<IActionResult> GetMovements()
+    {
+        if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
+        return Ok(await movementService.GetVisibleMovementsAsync(companyId, userId, EsDesarrollador));
+    }
 
-            page = Math.Clamp(page, 1, 1000000);
-            pageSize = Math.Clamp(pageSize, 1, 100);
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetMovement(int id)
+    {
+        if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
+        var movement = await movementService.GetVisibleMovementByIdAsync(id, companyId, userId, EsDesarrollador);
+        return movement is null ? NotFound() : Ok(movement);
+    }
 
-            var rows =
-                from movement in db.Movements.AsNoTracking()
-                join article in db.Articles.AsNoTracking() on movement.ArticleId equals article.Id
-                join inventory in db.Inventories.AsNoTracking() on article.InventoryId equals inventory.Id
-                where movement.CompanyId == companyId && article.CompanyId == companyId &&
-                    inventory.CompanyId == companyId && !inventory.IsMaster &&
-                    (movement.ActionId == 1 || movement.ActionId == 2 || movement.ActionId == 3)
-                select new
-                {
-                    movement.Id,
-                    movement.MovementDate,
-                    movement.ActionId,
-                    movement.Amount,
-                    movement.EmployeeId,
-                    movement.Observation,
-                    InventoryId = inventory.Id,
-                    InventoryName = inventory.Alias ?? inventory.InventoryName,
-                    UserId = inventory.UserId, // Propietario del inventario
-                    Username = inventory.Username,
-                    ActorUserId = db.Employees.Where(e => e.Id == movement.EmployeeId &&
-                        e.CompanyId == companyId).Select(e => e.UserId).FirstOrDefault(),
-                    ArticleId = article.Id,
-                    ArticleName = article.Name,
-                    ArticleCode = article.Code
-                };
+    [HttpPost]
+    public async Task<IActionResult> PostMovement([FromBody] Movement movement)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
 
-            if (inventoryId.HasValue) rows = rows.Where(x => x.InventoryId == inventoryId.Value);
-            if (userId.HasValue) rows = rows.Where(x => x.UserId == userId.Value);
-            if (actorUserId.HasValue) rows = rows.Where(x => x.ActorUserId == actorUserId.Value);
-            if (actionId.HasValue) rows = rows.Where(x => x.ActionId == actionId.Value);
-            if (fromDate.HasValue) rows = rows.Where(x => x.MovementDate >= fromDate.Value.UtcDateTime);
-            if (toDate.HasValue) rows = rows.Where(x => x.MovementDate <= toDate.Value.UtcDateTime);
+        var result = await movementService.CreateAuthorizedMovementAsync(movement, companyId, userId, EsDesarrollador);
+        if (result.Status == ServiceStatus.Created && result.Payload is Movement created)
+            return CreatedAtAction(nameof(GetMovement), new { id = created.Id }, created);
 
-            var total = await rows.CountAsync();
-            var items = await rows.OrderByDescending(x => x.MovementDate)
-                .ThenByDescending(x => x.Id)
-                .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-            return Ok(new { items, total, page, pageSize });
-        }
+        return FromServiceResult(result);
+    }
 
-        [HttpGet]
-        public async Task<IActionResult> GetMovements()
-        {
-            int companyId = ObtenerEmpresaSegura();
-            var accessible = AccessibleInventories(companyId, ObtenerUsuarioSeguro());
-            return Ok(await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
-                db.Movements.AsNoTracking().Where(m => m.CompanyId == companyId &&
-                    db.Articles.Any(a => a.Id == m.ArticleId && accessible.Contains(a.InventoryId)))));
-        }
+    [HttpGet("cancellations")]
+    public async Task<IActionResult> GetCancellations()
+    {
+        if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
+        return Ok(await movementService.GetVisibleCancellationsAsync(companyId, userId, EsDesarrollador));
+    }
 
-        [HttpGet("{id:int}")]
-        public async Task<IActionResult> GetMovement(int id)
-        {
-            var movement = await _movementService.GetByIdAsync(id);
-            if (movement == null || movement.CompanyId != ObtenerEmpresaSegura()) return NotFound();
-            var accessible = AccessibleInventories(movement.CompanyId, ObtenerUsuarioSeguro());
-            return await db.Articles.AnyAsync(a => a.Id == movement.ArticleId && accessible.Contains(a.InventoryId)) ? Ok(movement) : NotFound();
-        }
+    public sealed record CancelMovementRequest(string Reason);
 
-        [HttpPost]
-        public async Task<IActionResult> PostMovement([FromBody] Movement movement)
-        {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
-            movement.CompanyId = ObtenerEmpresaSegura();
-            if (!await db.Articles.AnyAsync(a => a.Id == movement.ArticleId &&
-                AccessibleInventories(movement.CompanyId, ObtenerUsuarioSeguro(), true).Contains(a.InventoryId))) return Forbid();
-            if (movement.ActionId == 3)
-                return BadRequest(new { error = "Las entregas se crean mediante /api/Assignments." });
-            try
-            {
-                movement.EmployeeId = await db.Employees.Where(e => e.CompanyId == movement.CompanyId &&
-                    e.UserId == ObtenerUsuarioSeguro()).Select(e => (int?)e.Id).FirstOrDefaultAsync();
-                var success = await _movementService.CreateAsync(movement);
-                return success ? CreatedAtAction(nameof(GetMovement), new { id = movement.Id }, movement)
-                    : BadRequest(new { error = "No se pudo registrar el movimiento." });
-            }
-            catch (ArgumentException e) { return BadRequest(new { error = e.Message }); }
-            catch (InvalidOperationException e) { return Conflict(new { error = e.Message }); }
-        }
-
-        [HttpGet("cancellations")]
-        public async Task<IActionResult> GetCancellations()
-        {
-            int companyId = ObtenerEmpresaSegura();
-            return Ok(await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(
-                db.MovementCancellations.Where(c => c.CompanyId == companyId &&
-                    db.Movements.Any(m => m.Id == c.OriginalMovementId &&
-                        db.Articles.Any(a => a.Id == m.ArticleId &&
-                            AccessibleInventories(companyId, ObtenerUsuarioSeguro()).Contains(a.InventoryId))))
-                    .Select(c => new { c.OriginalMovementId, c.ReversalMovementId, c.CancelledAt, c.Reason })));
-        }
-
-        public sealed record CancelMovementRequest(string Reason);
-
-        [HttpPost("{id:int}/cancel")]
-        public async Task<IActionResult> Cancel(int id, [FromBody] CancelMovementRequest body)
-        {
-            if (_movementService is not MovementService impl)
-                return StatusCode(500, new { error = "Servicio de movimientos no disponible." });
-            int companyId = ObtenerEmpresaSegura();
-            if (!await db.Movements.AnyAsync(m => m.Id == id && m.CompanyId == companyId &&
-                db.Articles.Any(a => a.Id == m.ArticleId &&
-                    AccessibleInventories(companyId, ObtenerUsuarioSeguro(), true).Contains(a.InventoryId)))) return Forbid();
-            var result = await impl.CancelStockMovementAsync(id, companyId, ObtenerUsuarioSeguro(), body.Reason);
-            return result.Success ? Ok(new { message = "Movimiento revertido y stock actualizado." })
-                : Conflict(new { error = result.Error });
-        }
+    [HttpPost("{id:int}/cancel")]
+    public async Task<IActionResult> Cancel(int id, [FromBody] CancelMovementRequest body)
+    {
+        if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
+        return FromServiceResult(await movementService.CancelAuthorizedMovementAsync(id, companyId, userId, EsDesarrollador, body.Reason));
     }
 }

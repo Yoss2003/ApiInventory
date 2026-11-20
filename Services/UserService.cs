@@ -1,9 +1,10 @@
-﻿using InventoryAPI.Helpers;
-using InventoryAPI.Models;
+﻿using InventoryAPI.Models;
 using InventoryAPI.Models.DTO;
 using InventoryAPI.Repositories;
 using InventoryAPI.Repositories.IRepositories;
+using InventoryAPI.Security;
 using InventoryAPI.Services.IServices;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using OtpNet;
 using System.Diagnostics;
@@ -11,8 +12,8 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Mail;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
-using InventoryAPI.Security;
 
 namespace InventoryAPI.Services
 {
@@ -20,20 +21,22 @@ namespace InventoryAPI.Services
     {
         public async Task<IEnumerable<UserDTO>> GetUsersDtoAsync()
         {
-            var users = await _workFlow.Repository<User>().GetAllWithIncludeAsync(u => u.Role!, u => u.Employee!);
-            return [.. users.Select(u => MapToDto(u))];
+            var users = await _workFlow.Repository<User>()
+                .Query(asNoTracking: true)
+                .Include(u => u.Role)
+                .Include(u => u.Employee)
+                .ToListAsync();
+            return [.. users.Select(MapToDto)];
         }
 
         public async Task<UserDTO?> GetUserDtoByIdAsync(int id)
         {
-            var userMatch = await _workFlow.Repository<User>().FindAsync(u => u.Id == id);
-            var user = userMatch.FirstOrDefault();
-            if (user == null) return null;
-
-            var fullUserMatch = await _workFlow.Repository<User>().GetAllWithIncludeAsync(u => u.Role!, u => u.Employee!);
-            var fullUser = fullUserMatch.FirstOrDefault(u => u.Id == id) ?? user;
-
-            return MapToDto(fullUser);
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: true)
+                .Include(u => u.Role)
+                .Include(u => u.Employee)
+                .FirstOrDefaultAsync(u => u.Id == id);
+            return user is null ? null : MapToDto(user);
         }
 
         private static UserDTO MapToDto(User u)
@@ -63,8 +66,11 @@ namespace InventoryAPI.Services
         public async Task<(bool Success, string Message)> UpdateUserAsync(int id, User userActualizado)
         {
             if (id != userActualizado.Id) return (false, "El ID no coincide.");
-            var usersMatch = await _workFlow.Repository<User>().GetAllWithIncludeAsync(u => u.Role!, u => u.Employee!);
-            var userDb = usersMatch.FirstOrDefault(u => u.Id == id);
+            var userDb = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .Include(u => u.Role)
+                .Include(u => u.Employee)
+                .FirstOrDefaultAsync(u => u.Id == id);
             if (userDb == null) return (false, "El usuario no existe.");
 
             userDb.Email = userActualizado.Email;
@@ -74,7 +80,8 @@ namespace InventoryAPI.Services
             userDb.IsActive = userActualizado.IsActive;
 
             if (userActualizado.RoleId > 0) userDb.RoleId = userActualizado.RoleId;
-            if (!string.IsNullOrWhiteSpace(userActualizado.Password)) userDb.Password = SecurityHelper.GenerarHashSHA256(userActualizado.Password);
+            if (!string.IsNullOrWhiteSpace(userActualizado.Password))
+                userDb.Password = PasswordHashService.HashPassword(userActualizado.Password);
             userDb.MustChangePassword = userActualizado.MustChangePassword;
 
             if (userActualizado.Employee != null)
@@ -105,14 +112,17 @@ namespace InventoryAPI.Services
 
         public async Task<(bool Success, object Data, string Message)> CreateUserAsync(User user, string contentRootPath)
         {
-            var usuariosExistentes = await _workFlow.Repository<User>().FindAsync(u => u.Username == user.Username);
-            if (usuariosExistentes.Any())
+            var existeUsuario = await _workFlow.Repository<User>()
+                .Query(asNoTracking: true)
+                .AnyAsync(u => u.Username == user.Username);
+            if (existeUsuario)
             {
                 return (false, new { mensaje = "Este usuario fue un trabajador, por lo que no puedes agregarlo." }, "Duplicado");
             }
 
-            var perfiles = await _workFlow.Repository<Profile>().GetAllAsync();
-            var perfilConfigurado = perfiles.FirstOrDefault(p => !string.IsNullOrEmpty(p.SmtpEmail) && !string.IsNullOrEmpty(p.SmtpPassword));
+            var perfilConfigurado = await _workFlow.Repository<Profile>()
+                .Query(asNoTracking: true)
+                .FirstOrDefaultAsync(p => !string.IsNullOrEmpty(p.SmtpEmail) && !string.IsNullOrEmpty(p.SmtpPassword));
             if (perfilConfigurado == null)
             {
                 return (false, new { requiresSmtpConfiguration = true, mensaje = "El sistema requiere que configures el correo emisario (SMTP) en los Ajustes antes de registrar personal." }, "SMTP no configurado.");
@@ -130,11 +140,8 @@ namespace InventoryAPI.Services
             user.Employee.CompanyId = user.CompanyId ?? 1;
             user.CompanyId = user.Employee.CompanyId;
 
-            // 1. GUARDAMOS LA CLAVE PLANA PARA EL CORREO
             string clavePlana = user.Password!;
-
-            // 2. ENCRIPTAMOS LA CLAVE PARA LA BASE DE DATOS (SHA256)
-            user.Password = SecurityHelper.GenerarHashSHA256(clavePlana);
+            user.Password = PasswordHashService.HashPassword(clavePlana);
 
             if (!string.IsNullOrEmpty(user.ProfilePictureUrl) && user.ProfilePictureUrl.Length > 500)
             {
@@ -161,25 +168,22 @@ namespace InventoryAPI.Services
 
             try
             {
-                // 3. INICIAMOS LA TRANSACCIÓN
                 await _workFlow.BeginTransactionAsync();
 
-                // Guardamos el usuario (con la contraseña ya encriptada)
                 await _workFlow.Repository<User>().AddAsync(user);
                 await _workFlow.CompleteAsync();
 
-                // Todo usuario obtiene un inventario propio, con independencia del rol.
-                // No se borra su acceso adicional a inventarios compartidos.
                 var personal = InventoryProvisioner.NewPersonal(user);
                 await _workFlow.Repository<Inventory>().AddAsync(personal);
                 await _workFlow.CompleteAsync();
 
                 if (user.AssignedInventoryId.HasValue && user.AssignedInventoryId.Value > 0)
                 {
-                    var permitted = await _workFlow.Repository<Inventory>().FindAsync(i =>
-                        i.Id == user.AssignedInventoryId.Value &&
-                        i.CompanyId == user.CompanyId && i.IsActive && !i.IsMaster);
-                    if (!permitted.Any())
+                    var permitted = await _workFlow.Repository<Inventory>()
+                        .Query(asNoTracking: true)
+                        .AnyAsync(i => i.Id == user.AssignedInventoryId.Value &&
+                                       i.CompanyId == user.CompanyId && i.IsActive && !i.IsMaster);
+                    if (!permitted)
                         throw new InvalidOperationException("El inventario asignado no pertenece a la empresa o es un maestro.");
 
                     var nuevoAcceso = new SharedInventory
@@ -195,10 +199,8 @@ namespace InventoryAPI.Services
                     await _workFlow.CompleteAsync();
                 }
 
-                // Confirmamos la transacción
                 await _workFlow.CommitTransactionAsync();
 
-                // Enviamos los correos (usando la clave plana)
                 string nombreFiltro = $"{user.Employee.FirstName} {user.Employee.LastName}".Trim();
                 _ = EnviarCorreoAprobacionAsync(user, nombreFiltro, perfilConfigurado.SmtpEmail!, perfilConfigurado.SmtpPassword!, perfilConfigurado.SmtpApproverEmail!);
                 _ = EnviarCorreoBienvenidaAsync(user, clavePlana, perfilConfigurado.SmtpEmail!, perfilConfigurado.SmtpPassword!);
@@ -214,30 +216,34 @@ namespace InventoryAPI.Services
 
         public async Task<(bool Success, User? User, string Message, bool Requires2FA, bool RequirePasswordChange, bool AccountPending)> LoginAsync(LoginRequestDTO request)
         {
-            var usersMatch = await _workFlow.Repository<User>().GetAllWithIncludeAsync(
-                u => u.Role!,
-                u => u.Employee!,
-                u => u.Company!
-            );
+            var candidates = await _workFlow.Repository<User>()
+                .Query(asNoTracking: true)
+                .Include(u => u.Role)
+                .Include(u => u.Employee)
+                .Include(u => u.Company)
+                .Where(u => u.Username == request.Username && (u.CompanyId == request.CompanyId || u.RoleId == 1))
+                .ToListAsync();
 
-            var targetUser = usersMatch.FirstOrDefault(u => u.Username == request.Username && (u.CompanyId == request.CompanyId || u.RoleId == 1) && PasswordHashService.Verify(request.Password, u.Password ?? ""));
+            var targetUser = candidates.FirstOrDefault(u => PasswordHashService.Verify(request.Password, u.Password ?? ""));
 
             if (targetUser == null) return (false, null, "Usuario o contraseña incorrectos", false, false, false);
 
             int DEVELOPER_ROLE_ID = 1;
 
             var activeCompany = await _workFlow.Repository<Company>()
-            .FindAsync(c => c.Id == request.CompanyId && c.IsActive);
-                if (!activeCompany.Any())
-                    return (false, null, "La empresa seleccionada no está activa.", false, false, false);
-                if (targetUser.RoleId != DEVELOPER_ROLE_ID)
-                {
-                    var licenses = await _workFlow.Repository<CompanyLicense>()
-                        .FindAsync(l => l.CompanyId == request.CompanyId);
-                    var license = licenses.FirstOrDefault();
-                    if (license is not null && (!license.IsEnabled || license.ExpiresAt <= DateTime.UtcNow))
-                        return (false, null, "La licencia de la empresa está suspendida o vencida.", false, false, true);
-                }
+                .Query(asNoTracking: true)
+                .AnyAsync(c => c.Id == request.CompanyId && c.IsActive);
+            if (!activeCompany)
+                return (false, null, "La empresa seleccionada no está activa.", false, false, false);
+
+            if (targetUser.RoleId != DEVELOPER_ROLE_ID)
+            {
+                var license = await _workFlow.Repository<CompanyLicense>()
+                    .Query(asNoTracking: true)
+                    .FirstOrDefaultAsync(l => l.CompanyId == request.CompanyId);
+                if (license is not null && (!license.IsEnabled || license.ExpiresAt <= DateTime.UtcNow))
+                    return (false, null, "La licencia de la empresa está suspendida o vencida.", false, false, true);
+            }
 
             if (targetUser.RoleId != DEVELOPER_ROLE_ID && targetUser.CompanyId != request.CompanyId)
             {
@@ -262,13 +268,8 @@ namespace InventoryAPI.Services
             if (targetUser.MustChangePassword)
                 return (true, targetUser, "Debe cambiar contraseña", false, true, false);
 
-
             if (request.CompanyId <= 0)
                 return (false, null, "Selecciona una empresa válida.", false, false, false);
-
-            var selectedCompany = await _workFlow.Repository<Company>().GetByIdAsync(request.CompanyId);
-            if (selectedCompany == null || !selectedCompany.IsActive)
-                return (false, null, "La empresa seleccionada no está disponible.", false, false, false);
 
             targetUser.Token = GenerarTokenJWT(targetUser, request.CompanyId);
             return (true, targetUser, "Login exitoso", false, false, false);
@@ -351,20 +352,22 @@ namespace InventoryAPI.Services
 
         public async Task<(bool Success, string Message)> ApproveEmployeeAsync(int id)
         {
-            var userMatch = await _workFlow.Repository<User>().GetAllWithIncludeAsync(u => u.Employee!);
-            var user = userMatch.FirstOrDefault(u => u.Id == id);
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .Include(u => u.Employee)
+                .FirstOrDefaultAsync(u => u.Id == id);
 
             if (user == null) return (false, "Usuario no encontrado en el sistema.");
-
             if (user.StatusId == 1) return (false, "Este colaborador ya había sido aprobado y activado previamente.");
 
             user.StatusId = 1;
-            user.Employee?.StatusId = 1;
+            if (user.Employee is not null) user.Employee.StatusId = 1;
 
             await _workFlow.CompleteAsync();
 
-            var perfiles = await _workFlow.Repository<Profile>().GetAllAsync();
-            var configuracion = perfiles.FirstOrDefault(p => !string.IsNullOrEmpty(p.SmtpEmail));
+            var configuracion = await _workFlow.Repository<Profile>()
+                .Query(asNoTracking: true)
+                .FirstOrDefaultAsync(p => !string.IsNullOrEmpty(p.SmtpEmail));
 
             if (configuracion != null && !string.IsNullOrEmpty(user.Email))
             {
@@ -412,7 +415,7 @@ namespace InventoryAPI.Services
                     EnableSsl = true,
                 };
 
-                string linkAprobacion = $"http://db-inventario-api.somee.com/api/Users/ApproveAccount/{user.Id}"; // Ajustado para el nuevo endpoint
+                string linkAprobacion = $"http://db-inventario-api.somee.com/api/Users/ApproveAccount/{user.Id}";
 
                 string htmlBody = $@"
                 <div style='font-family: ""Segoe UI"", Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e0e0e0; padding: 30px; border-radius: 12px; background-color: #ffffff; color: #333333; box-shadow: 0 4px 6px rgba(0,0,0,0.05);'>
@@ -421,7 +424,6 @@ namespace InventoryAPI.Services
                     </div>
                     <p style='font-size: 16px; line-height: 1.5;'>Hola Administrador,</p>
                     <p style='font-size: 15px; line-height: 1.5; color: #555;'>Se ha registrado un nuevo colaborador en la plataforma y requiere tu autorización para activar su acceso.</p>
-            
                     <div style='background-color: #f8f9fa; padding: 15px; border-left: 4px solid #E74C3C; margin: 20px 0;'>
                         <h3 style='margin-top: 0; color: #2c3e50; font-size: 16px;'>Detalles del Registro:</h3>
                         <ul style='list-style: none; padding-left: 0; margin: 0; font-size: 14px;'>
@@ -430,13 +432,10 @@ namespace InventoryAPI.Services
                             <li style='margin-bottom: 8px;'><strong>Fecha de Alta:</strong> {DateTime.Now:dd/MM/yyyy HH:mm}</li>
                         </ul>
                     </div>
-            
                     <p style='font-size: 14px; color: #666; margin-bottom: 25px;'><strong>Atención:</strong> La cuenta está actualmente en estado <em>Pendiente de Validación</em>. El usuario no podrá iniciar sesión hasta que apruebes esta solicitud.</p>
-            
                     <div style='text-align: center;'>
                         <a href='{linkAprobacion}' style='background-color: #2ECC71; color: white; padding: 14px 35px; text-decoration: none; font-weight: bold; border-radius: 6px; font-size: 16px; display: inline-block; box-shadow: 0 2px 4px rgba(46, 204, 113, 0.3);'>Aprobar y Activar Cuenta</a>
                     </div>
-            
                     <hr style='border: none; border-top: 1px solid #eee; margin: 30px 0;' />
                     <p style='font-size: 12px; color: #999; text-align: center;'>Este es un mensaje automático del OmniStock. Por favor no responder a este correo.</p>
                 </div>";
@@ -478,14 +477,11 @@ namespace InventoryAPI.Services
                     <div style='text-align: center; margin-bottom: 25px;'>
                         <h2 style='color: #2980b9; margin: 0; font-size: 24px;'>¡Bienvenido al Equipo, {user.Employee?.FirstName}!</h2>
                     </div>
-            
                     <p style='font-size: 16px; line-height: 1.6;'>Tu cuenta corporativa ha sido creada exitosamente. A continuación, te proporcionamos tus credenciales de acceso temporal:</p>
-            
                     <div style='background-color: #ffffff; padding: 20px; border-radius: 8px; border: 1px solid #e1e8ed; margin: 25px 0; text-align: center;'>
                         <p style='margin: 5px 0; font-size: 16px;'><strong>Usuario:</strong> <span style='color: #2980b9; font-size: 18px;'>{user.Username}</span></p>
                         <p style='margin: 5px 0; font-size: 16px;'><strong>Contraseña temporal:</strong> <span style='font-family: monospace; background-color: #f1f2f6; padding: 4px 8px; border-radius: 4px; font-size: 16px; letter-spacing: 1px;'>{clavePlana}</span></p>
                     </div>
-            
                     <div style='background-color: #fff3cd; color: #856404; padding: 15px; border-left: 4px solid #ffeeba; border-radius: 4px; margin-bottom: 20px;'>
                         <h4 style='margin-top: 0; margin-bottom: 10px; font-size: 15px;'>🔒 Recomendaciones de Seguridad:</h4>
                         <ul style='margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.5;'>
@@ -494,9 +490,7 @@ namespace InventoryAPI.Services
                             <li>Si no reconoces este registro, contacta a tu administrador inmediatamente.</li>
                         </ul>
                     </div>
-            
                     <p style='font-size: 14px; color: #555;'><em>Nota: Tu cuenta está siendo validada por la administración. Podrás ingresar al sistema una vez que sea aprobada.</em></p>
-            
                     <hr style='border: none; border-top: 1px solid #eee; margin: 30px 0;' />
                     <p style='font-size: 12px; color: #999; text-align: center;'>Este es un mensaje automático. Por favor no responder a este correo.</p>
                 </div>";
@@ -556,7 +550,7 @@ namespace InventoryAPI.Services
                 new Claim("UserId", user.Id.ToString()),
                 new Claim("CompanyId", selectedCompanyId.ToString()),
                 new Claim("RoleId", user.RoleId.ToString()),
-                new Claim(JwtRegisteredClaimNames.Iat,DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)
+                new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)
             };
 
             var token = new JwtSecurityToken(
@@ -585,20 +579,23 @@ namespace InventoryAPI.Services
 
         public async Task<(bool Success, string Message)> ResendWelcomeEmailAsync(int id)
         {
-            var usersMatch = await _workFlow.Repository<User>().GetAllWithIncludeAsync(u => u.Employee!);
-            var userDb = usersMatch.FirstOrDefault(u => u.Id == id);
+            var userDb = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .Include(u => u.Employee)
+                .FirstOrDefaultAsync(u => u.Id == id);
 
             if (userDb == null) return (false, "Usuario no encontrado.");
             if (string.IsNullOrWhiteSpace(userDb.Email)) return (false, "El usuario no tiene un correo asignado.");
 
-            var perfiles = await _workFlow.Repository<Profile>().GetAllAsync();
-            var perfilConfigurado = perfiles.FirstOrDefault(p => !string.IsNullOrEmpty(p.SmtpEmail) && !string.IsNullOrEmpty(p.SmtpPassword));
+            var perfilConfigurado = await _workFlow.Repository<Profile>()
+                .Query(asNoTracking: true)
+                .FirstOrDefaultAsync(p => !string.IsNullOrEmpty(p.SmtpEmail) && !string.IsNullOrEmpty(p.SmtpPassword));
 
             if (perfilConfigurado == null) return (false, "El servidor de correos SMTP no está configurado.");
 
             string nuevaClavePlana = Guid.NewGuid().ToString("N")[..8];
 
-            userDb.Password = SecurityHelper.GenerarHashSHA256(nuevaClavePlana);
+            userDb.Password = PasswordHashService.HashPassword(nuevaClavePlana);
             userDb.MustChangePassword = true;
             await _workFlow.CompleteAsync();
 
@@ -606,5 +603,49 @@ namespace InventoryAPI.Services
 
             return (true, "Nuevas credenciales generadas y enviadas con éxito.");
         }
+
+        public Task<int> CountActiveAdminsAsync(int companyId) => _workFlow.Repository<User>().Query(asNoTracking: true)
+        .CountAsync(u => u.CompanyId == companyId && u.RoleId == 2 && u.IsActive);
+
+        public async Task<string> CreateForcedPasswordResetTokenAsync(int userId, int companyId)
+        {
+            var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+
+            var earlier = await _workFlow.Repository<PasswordRecoveryRequest>()
+                .Query(asNoTracking: false)
+                .Where(r => r.UserId == userId && r.CompanyId == companyId &&
+                            r.CompletedAt == null && !r.Rejected)
+                .ToListAsync();
+
+            foreach (var item in earlier)
+            {
+                item.Rejected = true;
+                item.TokenHash = null;
+            }
+
+            await _workFlow.Repository<PasswordRecoveryRequest>().AddAsync(new PasswordRecoveryRequest
+            {
+                CompanyId = companyId,
+                UserId = userId,
+                TokenHash = hash,
+                RequestedAt = DateTime.UtcNow,
+                ApprovedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+            });
+
+            await _workFlow.CompleteAsync();
+            return token;
+        }
+
+        public Task<bool> UserBelongsToCompanyAsync(int userId, int companyId) =>
+            _workFlow.Repository<User>().Query(asNoTracking: true)
+                .AnyAsync(u => u.Id == userId && u.CompanyId == companyId);
+
+        public Task<int?> GetUserRoleIdInCompanyAsync(int userId, int companyId) =>
+            _workFlow.Repository<User>().Query(asNoTracking: true)
+                .Where(u => u.Id == userId && u.CompanyId == companyId)
+                .Select(u => (int?)u.RoleId)
+                .FirstOrDefaultAsync();
     }
 }

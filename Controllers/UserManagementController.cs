@@ -1,54 +1,31 @@
-using InventoryAPI.Data;
 using InventoryAPI.Models.DTO;
 using InventoryAPI.Security;
-using InventoryAPI.Services;
+using InventoryAPI.Services.IServices;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using System.ComponentModel.DataAnnotations;
 
 namespace InventoryAPI.Controllers;
 
-/// <summary>Administración por empresa; siempre deriva su ámbito del JWT.</summary>
 public sealed class UserManagementController(
-    AppDbContext db, InventoryAccessPolicy permissions,
-    ManagedUserRegistration registration,
-    UserCredentialMailer mailer) : BaseApiController
+    IUserManagementService userManagement,
+    InventoryAccessPolicy permissions,
+    IManagedUserRegistration registration) : BaseApiController
 {
-    private int CompanyId => InventoryAccessPolicy.CompanyId(User);
-    private int UserId => InventoryAccessPolicy.UserId(User);
     private bool IsManager => InventoryAccessPolicy.IsManager(User);
-    private async Task<bool> CanViewAsync() => IsManager &&
-        await permissions.HasAsync(User, InventoryPermissionCodes.ViewUsers);
-    private async Task<bool> CanEditAsync() => IsManager &&
-        await permissions.HasAsync(User, InventoryPermissionCodes.ManageUsers);
+    private async Task<bool> CanViewAsync() => IsManager && await permissions.HasAsync(User, InventoryPermissionCodes.ViewUsers);
+    private async Task<bool> CanEditAsync() => IsManager && await permissions.HasAsync(User, InventoryPermissionCodes.ManageUsers);
 
     [HttpGet("users")]
     public async Task<IActionResult> ListUsers()
     {
         if (!await CanViewAsync()) return Forbid();
-        var items = await db.Users.AsNoTracking().Where(u => u.CompanyId == CompanyId)
-            .OrderBy(u => u.Username)
-            .Select(u => new
-            {
-                u.Id, u.Username, u.Email, u.RoleId, u.CompanyId,
-                u.IsActive, u.StatusId,
-                firstName = u.Employee != null ? u.Employee.FirstName : null,
-                lastName = u.Employee != null ? u.Employee.LastName : null,
-                dni = u.Employee != null ? u.Employee.DNI : null,
-                personalInventoryId = db.Inventories.Where(i => i.UserId == u.Id &&
-                    i.CompanyId == CompanyId && !i.IsMaster && i.IsActive)
-                    .Select(i => (int?)i.Id).FirstOrDefault()
-            }).ToListAsync();
-        return Ok(items);
+        return Ok(await userManagement.ListUsersAsync(ObtenerEmpresaSegura()));
     }
 
     [HttpGet("roles")]
     public async Task<IActionResult> Roles()
     {
         if (!await CanViewAsync()) return Forbid();
-        return Ok(await db.Roles.AsNoTracking().Where(r => r.Id > 2)
-            .Select(r => new { r.Id, r.Name, r.Description })
-            .OrderBy(r => r.Name).ToListAsync());
+        return Ok(await userManagement.GetAssignableRolesAsync());
     }
 
     [HttpPost("users")]
@@ -57,169 +34,46 @@ public sealed class UserManagementController(
         if (!await CanEditAsync()) return Forbid();
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
         if (!await permissions.CanAssignRoleAsync(User, input.RoleId)) return Forbid();
-        var result = await registration.RegisterAsync(CompanyId, input, firstAdministrator: false);
+
+        var result = await registration.RegisterAsync(ObtenerEmpresaSegura(), input, firstAdministrator: false);
         return result.Success ? Ok(result.Created) : Conflict(new { error = result.Error });
     }
-
-    public sealed record UserDetailsUpdate(
-        [Required, MinLength(3), MaxLength(80)] string Username,
-        [Required, EmailAddress, MaxLength(254)] string Email,
-        [Required, MaxLength(100)] string FirstName,
-        [Required, MaxLength(100)] string LastName,
-        [RegularExpression(@"^\d{8}$")] string? Dni);
 
     [HttpPatch("users/{id:int}/details")]
     public async Task<IActionResult> UpdateDetails(int id, [FromBody] UserDetailsUpdate input)
     {
         if (!await CanEditAsync()) return Forbid();
         if (!ModelState.IsValid) return ValidationProblem(ModelState);
-        var user = await db.Users.Include(u => u.Employee)
-            .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == CompanyId);
-        if (user is null) return NotFound();
-        if (user.RoleId == 1 || (user.RoleId == 2 && !InventoryAccessPolicy.IsDeveloper(User)))
-            return Forbid();
-        var username = input.Username.Trim();
-        var email = input.Email.Trim();
-        if (await db.Users.AnyAsync(u => u.Id != id && u.Username == username))
-            return Conflict(new { error = "Este usuario ya existe." });
-        if (await db.Users.AnyAsync(u => u.Id != id && u.Email == email))
-            return Conflict(new { error = "El correo ya existe." });
-        if (!string.IsNullOrWhiteSpace(input.Dni) && await db.Employees.AnyAsync(e =>
-            e.CompanyId == CompanyId && e.UserId != id && e.DNI == input.Dni))
-            return Conflict(new { error = "El DNI ya está registrado." });
-        user.Username = username;
-        user.Email = email;
-        user.Employee ??= new InventoryAPI.Models.Employee
-        {
-            UserId = user.Id, CompanyId = CompanyId,
-            IsActive = true, StatusId = user.StatusId
-        };
-        user.Employee.FirstName = input.FirstName.Trim();
-        user.Employee.LastName = input.LastName.Trim();
-        user.Employee.DNI = input.Dni?.Trim();
-        await db.SaveChangesAsync();
-        return NoContent();
+        return FromServiceResult(await userManagement.UpdateDetailsAsync(id, input, ObtenerEmpresaSegura(), EsDesarrollador));
     }
-
-    public sealed record UserPermissionUpdate(
-        bool CanApplyDiscounts,
-        bool CanViewPurchaseCosts,
-        bool CanCancelSales,
-        bool CanEditProducts,
-        bool CanViewProfits);
 
     [HttpGet("users/{id:int}/permissions")]
     public async Task<IActionResult> UserPermissions(int id)
     {
         if (!await CanViewAsync()) return Forbid();
-        var user = await db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == CompanyId);
-        if (user is null) return NotFound();
-        var flags = await db.EmployeePermissions.AsNoTracking()
-            .FirstOrDefaultAsync(p => p.CompanyId == CompanyId && p.UserId == id);
-        var roleCodes = await db.RolePermissions.AsNoTracking()
-            .Where(r => r.RoleId == user.RoleId && r.Permission != null)
-            .Select(r => r.Permission!.SystemCode).Distinct().ToListAsync();
-        return Ok(new
-        {
-            canApplyDiscounts = flags?.CanApplyDiscounts ?? false,
-            canViewPurchaseCosts = flags?.CanViewPurchaseCosts ?? false,
-            canCancelSales = flags?.CanCancelSales ?? false,
-            canEditProducts = flags?.CanEditProducts ?? false,
-            canViewProfits = flags?.CanViewProfits ?? false,
-            rolePermissions = user.RoleId is 1 or 2
-                ? InventoryPermissionCodes.Definitions.Keys.ToList()
-                : roleCodes
-        });
+        return FromServiceResult(await userManagement.GetUserPermissionsAsync(id, ObtenerEmpresaSegura()));
     }
 
     [HttpPut("users/{id:int}/permissions")]
     public async Task<IActionResult> UpdateUserPermissions(int id, [FromBody] UserPermissionUpdate input)
     {
         if (!await CanEditAsync()) return Forbid();
-        if (id == UserId) return Conflict(new { error = "No puedes cambiar tus propios permisos." });
-        var user = await db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == CompanyId);
-        if (user is null) return NotFound();
-        if (user.RoleId is 1 or 2) return Forbid();
-        var flags = await db.EmployeePermissions.FirstOrDefaultAsync(p =>
-            p.CompanyId == CompanyId && p.UserId == id);
-        if (flags is null)
-        {
-            flags = new InventoryAPI.Models.EmployeePermission
-                { CompanyId = CompanyId, UserId = id };
-            db.EmployeePermissions.Add(flags);
-        }
-        flags.CanApplyDiscounts = input.CanApplyDiscounts;
-        flags.CanViewPurchaseCosts = input.CanViewPurchaseCosts;
-        flags.CanCancelSales = input.CanCancelSales;
-        flags.CanEditProducts = input.CanEditProducts;
-        flags.CanViewProfits = input.CanViewProfits;
-        await db.SaveChangesAsync();
-        return NoContent();
+        return FromServiceResult(await userManagement.UpdateUserPermissionsAsync(id, input, ObtenerEmpresaSegura(), ObtenerUsuarioSeguro()));
     }
-
-    public sealed record ResendCredentialsInput([EmailAddress] string? CorrectedEmail);
 
     [HttpPost("users/{id:int}/resend-credentials")]
-    public async Task<IActionResult> ResendCredentials(
-        int id, [FromBody] ResendCredentialsInput input)
+    public async Task<IActionResult> ResendCredentials(int id, [FromBody] ResendCredentialsInput input)
     {
         if (!await CanEditAsync()) return Forbid();
-        if (id == UserId) return Conflict(new { error = "Utiliza recuperación de cuenta para tus propias credenciales." });
-        var target = await db.Users.Include(u => u.Employee)
-            .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == CompanyId);
-        if (target is null) return NotFound(new { error = "Usuario no encontrado en tu empresa." });
-        if (target.RoleId == 1 || (target.RoleId == 2 &&
-            !InventoryAccessPolicy.IsDeveloper(User))) return Forbid();
-
-        var email = string.IsNullOrWhiteSpace(input.CorrectedEmail)
-            ? target.Email?.Trim() : input.CorrectedEmail.Trim();
-        if (string.IsNullOrWhiteSpace(email) ||
-            !new EmailAddressAttribute().IsValid(email) || email.Length > 254)
-            return BadRequest(new { error = "Ingresa un correo válido." });
-        if (await db.Users.AnyAsync(u => u.Id != target.Id &&
-            u.Email != null && u.Email.ToLower() == email.ToLower()))
-            return Conflict(new { error = "El correo ya pertenece a otro usuario." });
-        if (!await mailer.IsConfiguredAsync(CompanyId))
-            return StatusCode(503, new { error = "SMTP no configurado. Revisa Ajustes antes de reenviar." });
-
-        // Revoca todas las contraseñas temporales anteriores. Nunca devuelve la nueva clave.
-        var generated = UserCredentialMailer.NewTemporaryPassword();
-        target.Email = email;
-        target.Password = PasswordHashService.HashPassword(generated);
-        target.MustChangePassword = true;
-        await db.SaveChangesAsync();
-        var delivered = await mailer.SendAsync(CompanyId, email,
-            target.Employee?.FirstName ?? target.Username ?? "Usuario",
-            target.Username ?? string.Empty, generated);
-        return Ok(new {
-            emailSent = delivered.Sent,
-            message = delivered.Sent
-                ? "Nuevas credenciales enviadas. La contraseña anterior ya no funciona."
-                : delivered.Message,
-            email = email
-        });
+        return FromServiceResult(await userManagement.ResendCredentialsAsync(id, input, ObtenerEmpresaSegura(), ObtenerUsuarioSeguro(), EsDesarrollador));
     }
-
-    public sealed record UserAccessUpdate(bool IsActive, int? RoleId);
 
     [HttpPatch("users/{id:int}/access")]
     public async Task<IActionResult> UpdateAccess(int id, [FromBody] UserAccessUpdate input)
     {
         if (!await CanEditAsync()) return Forbid();
-        if (id == UserId) return Conflict(new { error = "No puedes modificar tu propio estado o rol." });
-        var user = await db.Users.FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == CompanyId);
-        if (user is null) return NotFound();
-        if (user.RoleId == 1 || user.RoleId == 2) return Forbid();
-        if (input.RoleId.HasValue)
-        {
-            if (!await permissions.CanAssignRoleAsync(User, input.RoleId.Value))
-                return Forbid();
-            user.RoleId = input.RoleId.Value;
-        }
-        user.IsActive = input.IsActive;
-        await db.SaveChangesAsync();
-        return NoContent();
+        return FromServiceResult(await userManagement.UpdateAccessAsync(
+            id, input, ObtenerEmpresaSegura(), ObtenerUsuarioSeguro(),
+            roleId => permissions.CanAssignRoleAsync(User, roleId)));
     }
 }

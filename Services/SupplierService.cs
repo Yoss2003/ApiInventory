@@ -1,17 +1,200 @@
-﻿using InventoryAPI.Models;
+﻿using InventoryAPI.Data;
+using InventoryAPI.Models;
 using InventoryAPI.Repositories;
 using InventoryAPI.Repositories.IRepositories;
 using InventoryAPI.Services.IServices;
-using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using System.Net;
 using System.Net.Http.Headers;
-using InventoryAPI.Data;
-using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace InventoryAPI.Services
 {
-    public class SupplierService(IWorkFlow workFlow, HttpClient httpClient, AppDbContext db, IConfiguration configuration) : WorkContainer<Supplier>(workFlow), ISupplierService
+    public class SupplierService(
+        IWorkFlow workFlow,
+        HttpClient httpClient,
+        AppDbContext db,
+        IConfiguration configuration,
+        IInventoryScopeService inventoryScope) : WorkContainer<Supplier>(workFlow), ISupplierService
     {
+        private static readonly HashSet<string> AllowedFiscalKeys = new(StringComparer.Ordinal)
+        {
+            "tipo", "actividad_economica", "ubigeo", "numero_trabajadores",
+            "tipo_facturacion", "tipo_contabilidad", "comercio_exterior",
+            "via_tipo", "via_nombre", "zona_codigo", "zona_tipo",
+            "numero", "interior", "lote", "dpto", "manzana", "kilometro",
+            "es_agente_retencion", "es_buen_contribuyente"
+        };
+
+        private static bool TryNormalizeFiscalData(string? source, out string? normalized)
+        {
+            normalized = null;
+            if (string.IsNullOrWhiteSpace(source)) return true;
+            if (source.Length > 10000) return false;
+            try
+            {
+                using var document = JsonDocument.Parse(source);
+                if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
+                var data = new Dictionary<string, JsonElement>();
+                foreach (var field in document.RootElement.EnumerateObject())
+                {
+                    if (!AllowedFiscalKeys.Contains(field.Name)) continue;
+                    if (field.Value.ValueKind is JsonValueKind.String)
+                    {
+                        if ((field.Value.GetString()?.Length ?? 0) > 500) return false;
+                    }
+                    else if (field.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False or JsonValueKind.Null))
+                        return false;
+                    data[field.Name] = field.Value.Clone();
+                }
+                normalized = JsonSerializer.Serialize(data);
+                return true;
+            }
+            catch (JsonException) { return false; }
+        }
+
+        public async Task<ServiceResult> LookupRucWithCacheAsync(string ruc, int companyId)
+        {
+            if (!Regex.IsMatch(ruc ?? string.Empty, @"^\d{11}$"))
+                return ServiceResult.BadRequest("El RUC debe tener 11 dígitos.");
+
+            var result = await ConsultarRucAsync(ruc!);
+            if (!result.Success)
+            {
+                var cached = await db.Suppliers.AsNoTracking().FirstOrDefaultAsync(s =>
+                    s.CompanyId == companyId && s.Ruc == ruc && s.IsActive);
+                if (cached is not null)
+                {
+                    cached.LookupFromCache = true;
+                    return ServiceResult.Ok(cached);
+                }
+                if (result.Message.Contains("crítica"))
+                    return ServiceResult.BadGateway(result.Message);
+                if (result.Message.Contains("no fue localizado"))
+                    return ServiceResult.NotFound(result.Message);
+                return ServiceResult.BadRequest(result.Message);
+            }
+
+            return ServiceResult.Ok(result.Data);
+        }
+
+        public async Task<ServiceResult> CreateSupplierAsync(Supplier supplier, int companyId, int userId, bool isDeveloper)
+        {
+            var ruc = supplier.Ruc?.Trim() ?? string.Empty;
+            if (!Regex.IsMatch(ruc, @"^\d{11}$"))
+                return ServiceResult.BadRequest("El proveedor necesita un RUC válido de 11 dígitos.");
+
+            var masterId = await inventoryScope.GetActiveMasterInventoryIdAsync(companyId);
+            if (!masterId.HasValue)
+                return ServiceResult.Conflict("Inventario maestro no encontrado.");
+
+            var writable = inventoryScope.GetAccessibleInventoryIds(companyId, userId, isDeveloper, requireWrite: true);
+            if (supplier.InventoryId != masterId.Value && !await writable.ContainsAsync(supplier.InventoryId))
+                return ServiceResult.Forbid();
+            if (supplier.InventoryId == masterId.Value && !await writable.AnyAsync())
+                return ServiceResult.Forbid();
+
+            var existing = await db.Suppliers.AsNoTracking().FirstOrDefaultAsync(s =>
+                s.CompanyId == companyId && s.Ruc == ruc && s.IsActive);
+            if (existing is not null)
+            {
+                existing.Reused = true;
+                return ServiceResult.Ok(existing);
+            }
+
+            if (!TryNormalizeFiscalData(supplier.FiscalDataJson, out var fiscalData))
+                return ServiceResult.BadRequest("Los datos fiscales adicionales tienen un formato inválido.");
+
+            supplier.Id = 0;
+            supplier.Ruc = ruc;
+            supplier.CompanyId = companyId;
+            supplier.InventoryId = masterId.Value;
+            supplier.IsActive = true;
+            supplier.BusinessName = supplier.BusinessName.Trim();
+            supplier.RelationshipDescription = supplier.RelationshipDescription?.Trim();
+            supplier.FiscalDataJson = fiscalData;
+
+            try
+            {
+                db.Suppliers.Add(supplier);
+                await db.SaveChangesAsync();
+                return ServiceResult.Created(supplier);
+            }
+            catch (DbUpdateException ex) when (ex.InnerException is PostgresException pg &&
+                pg.SqlState == PostgresErrorCodes.UniqueViolation &&
+                pg.ConstraintName == "IX_Suppliers_Company_Ruc")
+            {
+                db.Entry(supplier).State = EntityState.Detached;
+                var conflict = await db.Suppliers.AsNoTracking().FirstOrDefaultAsync(s =>
+                    s.CompanyId == companyId && s.Ruc == ruc && s.IsActive);
+                if (conflict is null)
+                    return ServiceResult.Conflict("RUC duplicado. Actualiza el catálogo.");
+                conflict.Reused = true;
+                return ServiceResult.Ok(conflict);
+            }
+        }
+
+        public async Task<ServiceResult> UpdateSupplierAsync(int id, Supplier supplier, int companyId)
+        {
+            if (id != supplier.Id) return ServiceResult.BadRequest("El ID no coincide.");
+
+            var masterId = await inventoryScope.GetActiveMasterInventoryIdAsync(companyId);
+            if (!masterId.HasValue)
+                return ServiceResult.Conflict("Inventario maestro no encontrado.");
+
+            var existing = await db.Suppliers.FirstOrDefaultAsync(s =>
+                s.Id == id && s.CompanyId == companyId && s.InventoryId == masterId.Value && s.IsActive);
+            if (existing is null) return ServiceResult.NotFound();
+
+            var ruc = supplier.Ruc?.Trim() ?? string.Empty;
+            if (!Regex.IsMatch(ruc, @"^\d{11}$"))
+                return ServiceResult.BadRequest("RUC inválido.");
+
+            if (await db.Suppliers.AnyAsync(s => s.CompanyId == companyId && s.Ruc == ruc && s.Id != id && s.IsActive))
+                return ServiceResult.Conflict("Ya existe un proveedor con ese RUC.");
+
+            if (!TryNormalizeFiscalData(supplier.FiscalDataJson, out var fiscalData))
+                return ServiceResult.BadRequest("Los datos fiscales adicionales tienen un formato inválido.");
+
+            existing.Ruc = ruc;
+            existing.BusinessName = supplier.BusinessName.Trim();
+            existing.ContactName = supplier.ContactName;
+            existing.Phone = supplier.Phone;
+            existing.Email = supplier.Email;
+            existing.Address = supplier.Address;
+            existing.Estado = supplier.Estado;
+            existing.Condicion = supplier.Condicion;
+            existing.Distrito = supplier.Distrito;
+            existing.Provincia = supplier.Provincia;
+            existing.Departamento = supplier.Departamento;
+            existing.StatusId = supplier.StatusId;
+            existing.RelationshipDescription = supplier.RelationshipDescription?.Trim();
+            existing.FiscalDataJson = fiscalData ?? existing.FiscalDataJson;
+
+            await db.SaveChangesAsync();
+            return ServiceResult.NoContent();
+        }
+
+        public async Task<ServiceResult> DeleteSupplierAsync(int id, int companyId)
+        {
+            var masterId = await inventoryScope.GetActiveMasterInventoryIdAsync(companyId);
+            if (!masterId.HasValue)
+                return ServiceResult.Conflict("Inventario maestro no encontrado.");
+
+            var supplier = await db.Suppliers.FirstOrDefaultAsync(s =>
+                s.Id == id && s.CompanyId == companyId && s.InventoryId == masterId.Value);
+            if (supplier is null) return ServiceResult.NotFound();
+
+            if (await db.Articles.AnyAsync(a => a.CompanyId == companyId && a.SupplierId == id))
+                return ServiceResult.Conflict("El proveedor se utiliza en artículos y no se puede desactivar.");
+
+            supplier.IsActive = false;
+            await db.SaveChangesAsync();
+            return ServiceResult.NoContent();
+        }
+
         public async Task<(bool Success, Supplier? Data, string Message)> ConsultarRucAsync(string ruc)
         {
             if (string.IsNullOrWhiteSpace(ruc) || ruc.Length != 11)
@@ -21,11 +204,6 @@ namespace InventoryAPI.Services
 
             try
             {
-                // La caché se consulta desde el controller con CompanyId del JWT.
-                // No reutilizar proveedores de otras empresas por coincidencia de RUC.
-
-                // El token de consulta SUNAT es central. Nunca tomar el primero
-                // de todas las empresas ni mostrarlo a un usuario.
                 string apiToken = configuration["Decolecta:Token"]?.Trim() ?? "";
                 if (string.IsNullOrWhiteSpace(apiToken))
                 {
@@ -42,8 +220,6 @@ namespace InventoryAPI.Services
                     return (false, null, "El servicio de SUNAT está inactivo. El administrador debe configurar el Token desde la App.");
                 }
 
-                // Consulta avanzada como opción principal. Si el plan no permite
-                // /full, se mantiene disponible la consulta básica ya funcional.
                 static string? Field(JsonElement obj, string key)
                 {
                     if (!obj.TryGetProperty(key, out var val)) return null;
@@ -91,7 +267,7 @@ namespace InventoryAPI.Services
                                 detail = Field(errorJson.RootElement, "message") ??
                                     Field(errorJson.RootElement, "error") ?? detail;
                         }
-                        catch (JsonException) { /* Error externo sin estructura JSON. */ }
+                        catch (JsonException) { }
                         return (false, null,
                             $"Decolecta rechazó la consulta ({(int)finalResponse.StatusCode}): {detail}");
                     }
@@ -105,8 +281,6 @@ namespace InventoryAPI.Services
                     if (string.IsNullOrWhiteSpace(businessName))
                         return (false, null, "SUNAT no devolvió una razón social válida para ese RUC.");
 
-                    // Los datos fiscales que ya existen en la BD se pueden guardar.
-                    // Los nuevos campos avanzados son [NotMapped] y solo informativos.
                     var supplier = new Supplier
                     {
                         InventoryId = 0,

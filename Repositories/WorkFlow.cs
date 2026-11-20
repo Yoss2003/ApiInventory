@@ -1,86 +1,54 @@
-﻿using InventoryAPI.Models;
-using InventoryAPI.Data;
+﻿using InventoryAPI.Data;
+using InventoryAPI.Models;
 using InventoryAPI.Repositories.IRepositories;
 using Microsoft.EntityFrameworkCore.Storage;
+using System.Collections.Concurrent;
 
 namespace InventoryAPI.Repositories
 {
-    public class WorkFlow : IWorkFlow
+    public class WorkFlow(AppDbContext context) : IWorkFlow
     {
-        private readonly AppDbContext _context;
+        private readonly AppDbContext _context = context;
+        private readonly ConcurrentDictionary<Type, object> _repositories = new();
         private IDbContextTransaction? _transaction;
-        public IGenericRepository<AccountReceivable> AccountReceivables { get; private set; }
-        public IGenericRepository<ActionItem> ActionItems { get; private set; }
-        public IGenericRepository<Article> Articles { get; private set; }
-        public IGenericRepository<Brand> Brands { get; private set; }
-        public IGenericRepository<Category> Categories { get; private set; }
-        public IGenericRepository<Currency> Currencies { get; private set; }
-        public IGenericRepository<Customer> Customers { get; private set; }
-        public IGenericRepository<Employee> Employees { get; private set; }
-        public IGenericRepository<ExportRoute> ExportRoutes { get; private set; }
-        public IGenericRepository<ExchangeRate> ExchangeRates { get; private set; }
-        public IGenericRepository<HistoryLog> HistoryLogs { get; private set; }
-        public IGenericRepository<InstallmentPayment> InstallmentPayments { get; private set; }
-        public IGenericRepository<Inventory> Inventories { get; private set; }
-        public IGenericRepository<Language> Languages { get; private set; }
-        public IGenericRepository<MeasurementUnit> MeasurementUnits { get; private set; }
-        public IGenericRepository<Movement> Movements { get; private set; }
-        public IGenericRepository<Notification> Notifications { get; private set; }
-        public IGenericRepository<Parameters> Parameters { get; private set; }
-        public IGenericRepository<Permission> Permissions { get; private set; }
-        public IGenericRepository<Profile> Profiles { get; private set; }
-        public IGenericRepository<RecoveryAttempt> RecoveryAttempts { get; private set; }
-        public IGenericRepository<Role> Roles { get; private set; }
-        public IGenericRepository<RolePermission> RolePermissions { get; private set; }
-        public IGenericRepository<Sale> Sales { get; private set; }
-        public IGenericRepository<SalesMode> SalesModes { get; private set; }
-        public IGenericRepository<SecurityQuestion> SecurityQuestions { get; private set; }
-        public IGenericRepository<Supplier> Suppliers { get; private set; }
-        public IGenericRepository<Theme> Themes { get; private set; }
-        public IGenericRepository<TimeZoneItem> TimeZones { get; private set; }
-        public IGenericRepository<User> Users { get; private set; }
-        public IGenericRepository<CategoryMeasurementUnit> CategoryMeasurementUnits { get; private set; }
 
-
-        public WorkFlow(AppDbContext context)
-        {
-            _context = context;
-            AccountReceivables = new GenericRepository<AccountReceivable>(_context);
-            ActionItems = new GenericRepository<ActionItem>(_context);
-            Articles = new GenericRepository<Article>(_context);
-            Brands = new GenericRepository<Brand>(_context);
-            Categories = new GenericRepository<Category>(_context);
-            Currencies = new GenericRepository<Currency>(_context);
-            Customers = new GenericRepository<Customer>(_context);
-            Employees = new GenericRepository<Employee>(_context);
-            ExportRoutes = new GenericRepository<ExportRoute>(_context);
-            ExchangeRates = new GenericRepository<ExchangeRate>(_context);
-            HistoryLogs = new GenericRepository<HistoryLog>(_context);
-            InstallmentPayments = new GenericRepository<InstallmentPayment>(_context);
-            Inventories = new GenericRepository<Inventory>(_context);
-            Languages = new GenericRepository<Language>(_context);
-            MeasurementUnits = new GenericRepository<MeasurementUnit>(_context);
-            Movements = new GenericRepository<Movement>(_context);
-            Notifications = new GenericRepository<Notification>(_context);
-            Parameters = new GenericRepository<Parameters>(_context);
-            Permissions = new GenericRepository<Permission>(_context);
-            Profiles = new GenericRepository<Profile>(_context);
-            RecoveryAttempts = new GenericRepository<RecoveryAttempt>(_context);
-            Roles = new GenericRepository<Role>(_context);
-            RolePermissions = new GenericRepository<RolePermission>(_context);
-            Sales = new GenericRepository<Sale>(_context);
-            SalesModes = new GenericRepository<SalesMode>(_context);
-            SecurityQuestions = new GenericRepository<SecurityQuestion>(_context);
-            Suppliers = new GenericRepository<Supplier>(_context);
-            Themes = new GenericRepository<Theme>(_context);
-            TimeZones = new GenericRepository<TimeZoneItem>(_context);
-            Users = new GenericRepository<User>(_context);
-            CategoryMeasurementUnits = new GenericRepository<CategoryMeasurementUnit>(_context);
-        }
+        public IGenericRepository<AccountReceivable> AccountReceivables => Repository<AccountReceivable>();
+        public IGenericRepository<ActionItem> ActionItems => Repository<ActionItem>();
+        public IGenericRepository<Article> Articles => Repository<Article>();
+        public IGenericRepository<Brand> Brands => Repository<Brand>();
+        public IGenericRepository<Category> Categories => Repository<Category>();
+        public IGenericRepository<Currency> Currencies => Repository<Currency>();
+        public IGenericRepository<Customer> Customers => Repository<Customer>();
+        public IGenericRepository<Employee> Employees => Repository<Employee>();
+        public IGenericRepository<ExportRoute> ExportRoutes => Repository<ExportRoute>();
+        public IGenericRepository<ExchangeRate> ExchangeRates => Repository<ExchangeRate>();
+        public IGenericRepository<HistoryLog> HistoryLogs => Repository<HistoryLog>();
+        public IGenericRepository<InstallmentPayment> InstallmentPayments => Repository<InstallmentPayment>();
+        public IGenericRepository<Inventory> Inventories => Repository<Inventory>();
+        public IGenericRepository<Language> Languages => Repository<Language>();
+        public IGenericRepository<MeasurementUnit> MeasurementUnits => Repository<MeasurementUnit>();
+        public IGenericRepository<Movement> Movements => Repository<Movement>();
+        public IGenericRepository<Notification> Notifications => Repository<Notification>();
+        public IGenericRepository<Parameters> Parameters => Repository<Parameters>();
+        public IGenericRepository<Permission> Permissions => Repository<Permission>();
+        public IGenericRepository<Profile> Profiles => Repository<Profile>();
+        public IGenericRepository<RecoveryAttempt> RecoveryAttempts => Repository<RecoveryAttempt>();
+        public IGenericRepository<Role> Roles => Repository<Role>();
+        public IGenericRepository<RolePermission> RolePermissions => Repository<RolePermission>();
+        public IGenericRepository<Sale> Sales => Repository<Sale>();
+        public IGenericRepository<SalesMode> SalesModes => Repository<SalesMode>();
+        public IGenericRepository<SecurityQuestion> SecurityQuestions => Repository<SecurityQuestion>();
+        public IGenericRepository<Supplier> Suppliers => Repository<Supplier>();
+        public IGenericRepository<Theme> Themes => Repository<Theme>();
+        public IGenericRepository<TimeZoneItem> TimeZones => Repository<TimeZoneItem>();
+        public IGenericRepository<User> Users => Repository<User>();
+        public IGenericRepository<CategoryMeasurementUnit> CategoryMeasurementUnits => Repository<CategoryMeasurementUnit>();
 
         public IGenericRepository<TEntity> Repository<TEntity>() where TEntity : class
         {
-            return new GenericRepository<TEntity>(_context);
+            return (IGenericRepository<TEntity>)_repositories.GetOrAdd(
+                typeof(TEntity),
+                _ => new GenericRepository<TEntity>(_context));
         }
 
         public async Task<int> CompleteAsync()
@@ -90,30 +58,45 @@ namespace InventoryAPI.Repositories
 
         public async Task BeginTransactionAsync()
         {
-            _transaction = await _context.Database.BeginTransactionAsync();
+            if (_transaction is null)
+            {
+                _transaction = await _context.Database.BeginTransactionAsync();
+            }
         }
 
         public async Task CommitTransactionAsync()
         {
-            if (_transaction != null)
+            if (_transaction is null) return;
+            try
             {
                 await _transaction.CommitAsync();
+            }
+            finally
+            {
                 await _transaction.DisposeAsync();
+                _transaction = null;
             }
         }
 
         public async Task RollbackTransactionAsync()
         {
-            if (_transaction != null)
+            if (_transaction is null) return;
+            try
             {
                 await _transaction.RollbackAsync();
+            }
+            finally
+            {
                 await _transaction.DisposeAsync();
+                _transaction = null;
             }
         }
 
         public void Dispose()
         {
-            _context.Dispose();
+            _transaction?.Dispose();
+            _transaction = null;
+            GC.SuppressFinalize(this);
         }
     }
 }

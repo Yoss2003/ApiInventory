@@ -1,3 +1,4 @@
+using InventoryAPI.Services.IServices;
 using System.Net.Http.Headers;
 using System.Text.RegularExpressions;
 
@@ -8,7 +9,7 @@ namespace InventoryAPI.Services;
 /// administrativa; los clientes se autentican en nuestros controladores habituales.
 /// La base de datos conserva exclusivamente una referencia con prefijo "sb:".
 /// </summary>
-public sealed class PrivateMediaStorage(HttpClient client, IConfiguration config)
+public sealed class PrivateMediaStorage(HttpClient client, IConfiguration config) : IPrivateMediaStorage
 {
     public const string ReferencePrefix = "sb:";
     private readonly HttpClient _client = client;

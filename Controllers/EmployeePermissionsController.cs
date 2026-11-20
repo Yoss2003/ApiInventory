@@ -1,15 +1,15 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using InventoryAPI.Services.IServices;
-using InventoryAPI.Models;
+﻿using InventoryAPI.Models;
 using InventoryAPI.Security;
-using InventoryAPI.Data;
-using Microsoft.EntityFrameworkCore;
+using InventoryAPI.Services.IServices;
+using Microsoft.AspNetCore.Mvc;
 
 namespace InventoryAPI.Controllers
 {
-    public class EmployeePermissionsController(IEmployeePermissionService service, InventoryAccessPolicy policy, AppDbContext db) : BaseApiController
+    public class EmployeePermissionsController(
+        IEmployeePermissionService service,
+        InventoryAccessPolicy policy) : BaseApiController
     {
-        [HttpGet("user/{userId}")]
+        [HttpGet("user/{userId:int}")]
         public async Task<IActionResult> GetPermissionsByUser(int userId)
         {
             int companyId = ObtenerEmpresaSegura();
@@ -17,32 +17,16 @@ namespace InventoryAPI.Controllers
                 !await policy.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
 
             var permissions = await service.GetByUserIdAndCompanyAsync(userId, companyId);
-            if (permissions == null) return NotFound();
-
-            return Ok(permissions);
+            return permissions is null ? NotFound() : Ok(permissions);
         }
 
-        [HttpPut("{id}")]
+        [HttpPut("{id:int}")]
         public async Task<IActionResult> PutPermissions(int id, [FromBody] EmployeePermission permissions)
         {
             if (!InventoryAccessPolicy.IsManager(User) ||
                 !await policy.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
-            if (id != permissions.Id) return BadRequest();
 
-            int companyId = ObtenerEmpresaSegura();
-            permissions.CompanyId = companyId;
-
-            var existingPerms = await service.GetByIdAsync(id);
-            if (existingPerms == null || existingPerms.CompanyId != companyId) return NotFound();
-            if (existingPerms.UserId != permissions.UserId ||
-                !await db.Users.AnyAsync(u => u.Id == permissions.UserId &&
-                    u.CompanyId == companyId && u.RoleId > 2))
-                return Forbid();
-
-            var success = await service.UpdateAsync(permissions);
-            if (!success) return BadRequest();
-
-            return NoContent();
+            return FromServiceResult(await service.UpdateAuthorizedAsync(id, permissions, ObtenerEmpresaSegura()));
         }
     }
 }

@@ -3,6 +3,7 @@ using InventoryAPI.Models.DTO;
 using InventoryAPI.Repositories;
 using InventoryAPI.Repositories.IRepositories;
 using InventoryAPI.Services.IServices;
+using Microsoft.EntityFrameworkCore;
 
 namespace InventoryAPI.Services
 {
@@ -10,34 +11,30 @@ namespace InventoryAPI.Services
     {
         public override async Task<IEnumerable<Employee>> GetAllAsync()
         {
-            var employees = await _workFlow.Repository<Employee>()
-                .GetAllWithIncludeAsync(e => e.User!);
-
-            var activeEmployees = employees.Where(e => e.IsActive).ToList();
+            var activeEmployees = await _workFlow.Repository<Employee>()
+                .Query(asNoTracking: true)
+                .Include(e => e.User)
+                .Where(e => e.IsActive)
+                .ToListAsync();
 
             foreach (var emp in activeEmployees)
             {
-                if (emp.User != null)
-                {
-                    emp.PictureUrl = emp.User.ProfilePictureUrl;
-                }
+                if (emp.User != null) emp.PictureUrl = emp.User.ProfilePictureUrl;
             }
             return activeEmployees;
         }
 
         public override async Task<IEnumerable<Employee>> GetAllByCompanyIdAsync(int companyId)
         {
-            var employees = await _workFlow.Repository<Employee>()
-                .GetAllWithIncludeAsync(e => e.User!);
-
-            var activeEmployees = employees.Where(e => e.CompanyId == companyId && e.IsActive).ToList();
+            var activeEmployees = await _workFlow.Repository<Employee>()
+                .Query(asNoTracking: true)
+                .Include(e => e.User)
+                .Where(e => e.CompanyId == companyId && e.IsActive)
+                .ToListAsync();
 
             foreach (var emp in activeEmployees)
             {
-                if (emp.User != null)
-                {
-                    emp.PictureUrl = emp.User.ProfilePictureUrl;
-                }
+                if (emp.User != null) emp.PictureUrl = emp.User.ProfilePictureUrl;
             }
             return activeEmployees;
         }
@@ -55,8 +52,7 @@ namespace InventoryAPI.Services
             existingEmployee.CompanyId = employee.CompanyId;
 
             _workFlow.Repository<Employee>().Update(existingEmployee);
-            var result = await _workFlow.CompleteAsync();
-            return result > 0;
+            return await _workFlow.CompleteAsync() > 0;
         }
 
         public async Task<(bool Success, string Message)> UpdateEmployeeWithUserAsync(int id, EmployeeUpdateDTO dto)
@@ -84,32 +80,29 @@ namespace InventoryAPI.Services
                 }
 
                 _workFlow.Repository<Employee>().Update(employeeDb);
-
                 await _workFlow.CompleteAsync();
-
                 return (true, "Empleado y usuario actualizados correctamente.");
             }
-            catch (Exception ex)
+            catch
             {
-                System.Diagnostics.Debug.WriteLine($"[ERROR TRANSACCIÓN EMPLEADO]: {ex.Message}");
                 return (false, "Ocurrió un error interno al actualizar los registros.");
             }
         }
 
         public override async Task<bool> DeleteAsync(int id, string deletedBy = "Sistema")
         {
-            var empMatch = await _workFlow.Repository<Employee>().GetAllWithIncludeAsync(e => e.User!);
-            var existingEmployee = empMatch.FirstOrDefault(e => e.Id == id);
+            var existingEmployee = await _workFlow.Repository<Employee>()
+                .Query(asNoTracking: false)
+                .Include(e => e.User)
+                .FirstOrDefaultAsync(e => e.Id == id);
 
             if (existingEmployee == null) return false;
 
             existingEmployee.IsActive = false;
-
-            existingEmployee.User?.IsActive = false;
+            if (existingEmployee.User is not null) existingEmployee.User.IsActive = false;
 
             _workFlow.Repository<Employee>().Update(existingEmployee);
-            var result = await _workFlow.CompleteAsync();
-            return result > 0;
+            return await _workFlow.CompleteAsync() > 0;
         }
     }
 }

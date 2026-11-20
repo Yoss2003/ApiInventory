@@ -16,7 +16,7 @@ namespace InventoryAPI.Services;
 /// </summary>
 public sealed class ManagedUserRegistration(
     AppDbContext db, ICompanyLicenseService licenses,
-    UserCredentialMailer mailer, ILogger<ManagedUserRegistration> logger)
+    UserCredentialMailer mailer, ILogger<ManagedUserRegistration> logger) : IManagedUserRegistration
 {
     public async Task<(bool Success, string? Error, object? Created)> RegisterAsync(
         int companyId, ManagedUserInput input, bool firstAdministrator)

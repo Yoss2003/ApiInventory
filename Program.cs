@@ -31,12 +31,6 @@ builder.Services.AddHostedService<ApprovalCleanupService>();
 
 // Soporte para clientes HTTP (Necesario para consultar SUNAT)
 builder.Services.AddHttpClient();
-builder.Services.AddHttpClient<PrivateMediaStorage>(client =>
-{
-    client.Timeout = TimeSpan.FromSeconds(45);
-});
-builder.Services.AddScoped<LegacyMediaMigrator>();
-
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
@@ -44,6 +38,9 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
 
 // Registro de WorkFlow
 builder.Services.AddScoped<IWorkFlow, WorkFlow>();
@@ -55,8 +52,7 @@ builder.Services.AddScoped<IArticleService, ArticleService>();
 builder.Services.AddScoped<IBrandService, BrandService>();
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<ICurrencyService, CurrencyService>();
-builder.Services.AddHttpClient<ICustomerService, CustomerService>(client =>
-    client.Timeout = TimeSpan.FromSeconds(20));
+builder.Services.AddHttpClient<ICustomerService, CustomerService>(client => client.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<IDateFormatService, DateFormatService>();
 builder.Services.AddScoped<IEmployeeService, EmployeeService>();
 builder.Services.AddScoped<IExportRouteService, ExportRouteService>();
@@ -84,8 +80,6 @@ builder.Services.AddScoped<ITimeZoneItemService, TimeZoneItemService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<ICompanyLicenseService, CompanyLicenseService>();
 builder.Services.AddScoped<InventoryAccessPolicy>();
-builder.Services.AddScoped<ManagedUserRegistration>();
-builder.Services.AddScoped<UserCredentialMailer>();
 
 builder.Services.AddScoped<IRolePermissionService, RolePermissionService>();
 builder.Services.AddScoped<ICategoryMeasurementUnitService, CategoryMeasurementUnitService>();
@@ -95,6 +89,22 @@ builder.Services.AddScoped<ICompanyService, CompanyService>();
 builder.Services.AddScoped<IEmployeePermissionService, EmployeePermissionService>();
 
 builder.Services.AddScoped<IFcmNotificationService, FcmNotificationService>();
+
+builder.Services.AddScoped<IInventoryScopeService, InventoryScopeService>();
+builder.Services.AddScoped<IManagedUserRegistration, ManagedUserRegistration>();
+builder.Services.AddScoped<IUserCredentialMailer, UserCredentialMailer>();
+builder.Services.AddScoped<ILegacyMediaMigrator, LegacyMediaMigrator>();
+builder.Services.AddScoped<IUserManagementService, UserManagementService>();
+builder.Services.AddScoped<IDevCompanyService, DevCompanyService>();
+builder.Services.AddScoped<IPasswordRecoveryService, PasswordRecoveryService>();
+builder.Services.AddScoped<ICompanyLogoService, CompanyLogoService>();
+builder.Services.AddScoped<IArticleMediaService, ArticleMediaService>();
+builder.Services.AddScoped<IAssignmentService, AssignmentService>();
+builder.Services.AddScoped<ISerialUnitService, SerialUnitService>();
+builder.Services.AddHttpClient<IPrivateMediaStorage, PrivateMediaStorage>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(45);
+});
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -163,7 +173,7 @@ if (app.Environment.IsDevelopment())
 }
 else
 {
-    app.UseExceptionHandler("/error");
+    app.UseExceptionHandler();
 }
 
 app.UseStaticFiles();
@@ -290,7 +300,7 @@ using (var scope = app.Services.CreateScope())
 if (args.Contains("--migrate-private-media", StringComparer.OrdinalIgnoreCase))
 {
     using var migrationScope = app.Services.CreateScope();
-    var migrator = migrationScope.ServiceProvider.GetRequiredService<LegacyMediaMigrator>();
+    var migrator = migrationScope.ServiceProvider.GetRequiredService<ILegacyMediaMigrator>();
     await migrator.RunAsync();
     return;
 }

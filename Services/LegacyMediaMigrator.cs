@@ -1,5 +1,6 @@
 using InventoryAPI.Data;
 using InventoryAPI.Models;
+using InventoryAPI.Services.IServices;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,7 +15,7 @@ public sealed class LegacyMediaMigrator(
     PrivateMediaStorage storage,
     IConfiguration config,
     IWebHostEnvironment environment,
-    ILogger<LegacyMediaMigrator> logger)
+    ILogger<LegacyMediaMigrator> logger) : ILegacyMediaMigrator
 {
     public async Task RunAsync(CancellationToken ct = default)
     {

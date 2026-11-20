@@ -1,15 +1,16 @@
+using InventoryAPI.Data;
+using InventoryAPI.Services.IServices;
+using Microsoft.EntityFrameworkCore;
 using System.Net;
 using System.Net.Mail;
 using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
-using InventoryAPI.Data;
-using Microsoft.EntityFrameworkCore;
 
 namespace InventoryAPI.Services;
 
 /// <summary>Correo de bienvenida siguiendo la plantilla de MAUI; no registra ni devuelve claves al administrador.</summary>
-public sealed class UserCredentialMailer(AppDbContext db, IConfiguration config, ILogger<UserCredentialMailer> logger)
+public sealed class UserCredentialMailer(AppDbContext db, IConfiguration config, ILogger<UserCredentialMailer> logger) : IUserCredentialMailer
 {
     public static string NewTemporaryPassword() =>
         Convert.ToHexString(RandomNumberGenerator.GetBytes(16));

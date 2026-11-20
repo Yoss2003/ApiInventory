@@ -20,5 +20,9 @@ namespace InventoryAPI.Services.IServices
         Task<bool> Enable2FAAsync(int id, string code);
         Task<bool> Disable2FAAsync(int id);
         Task<bool> UpdateFcmTokenAsync(int userId, string fcmToken);
+        Task<int> CountActiveAdminsAsync(int companyId);
+        Task<string> CreateForcedPasswordResetTokenAsync(int userId, int companyId);
+        Task<bool> UserBelongsToCompanyAsync(int userId, int companyId);
+        Task<int?> GetUserRoleIdInCompanyAsync(int userId, int companyId);
     }
 }

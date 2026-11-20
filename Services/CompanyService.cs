@@ -2,6 +2,7 @@
 using InventoryAPI.Repositories;
 using InventoryAPI.Repositories.IRepositories;
 using InventoryAPI.Services.IServices;
+using Microsoft.EntityFrameworkCore;
 
 namespace InventoryAPI.Services
 {
@@ -9,9 +10,8 @@ namespace InventoryAPI.Services
     {
         public async Task<IEnumerable<CompanyPublicDTO>> GetActiveCompaniesPublicAsync()
         {
-            var companies = await _workFlow.Repository<Company>().GetAllAsync();
-
-            return companies
+            return await _workFlow.Repository<Company>()
+                .Query(asNoTracking: true)
                 .Where(c => c.IsActive)
                 .Select(c => new CompanyPublicDTO
                 {
@@ -20,7 +20,7 @@ namespace InventoryAPI.Services
                     LogoUrl = c.LogoUrl,
                     PrimaryColorHex = c.PrimaryColorHex
                 })
-                .ToList();
+                .ToListAsync();
         }
     }
 }

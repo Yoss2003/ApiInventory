@@ -10,9 +10,24 @@ namespace InventoryAPI.Repositories
         protected readonly AppDbContext _context = context;
         internal DbSet<T> dbSet = context.Set<T>();
 
+        public IQueryable<T> Query(bool asNoTracking = true) =>
+            asNoTracking ? dbSet.AsNoTracking() : dbSet;
+
         public async Task<IEnumerable<T>> GetAllWithIncludeAsync(params Expression<Func<T, object>>[] includes)
         {
             IQueryable<T> query = dbSet;
+            foreach (var include in includes)
+            {
+                query = query.Include(include);
+            }
+            return await query.ToListAsync();
+        }
+
+        public async Task<IEnumerable<T>> FindWithIncludeAsync(
+            Expression<Func<T, bool>> predicate,
+            params Expression<Func<T, object>>[] includes)
+        {
+            IQueryable<T> query = dbSet.Where(predicate);
             foreach (var include in includes)
             {
                 query = query.Include(include);
