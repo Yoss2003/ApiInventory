@@ -124,7 +124,7 @@ namespace InventoryAPI.Services
             }
         }
 
-        public async Task<(bool Success, object Data, string Message)> CreateUserAsync(User user, string contentRootPath)
+        public async Task<(bool Success, object Data, string Message)> CreateUserAsync(User user, int companyId, string contentRootPath)
         {
             var existeUsuario = await _workFlow.Repository<User>()
                 .Query(asNoTracking: true)
@@ -136,7 +136,7 @@ namespace InventoryAPI.Services
 
             var perfilConfigurado = await _workFlow.Repository<Profile>()
                 .Query(asNoTracking: true)
-                .FirstOrDefaultAsync(p => !string.IsNullOrEmpty(p.SmtpEmail) && !string.IsNullOrEmpty(p.SmtpPassword));
+                .FirstOrDefaultAsync(p => p.CompanyId == companyId && !string.IsNullOrEmpty(p.SmtpEmail) && !string.IsNullOrEmpty(p.SmtpPassword));
             if (perfilConfigurado == null)
             {
                 return (false, new { requiresSmtpConfiguration = true, mensaje = "El sistema requiere que configures el correo emisario (SMTP) en los Ajustes antes de registrar personal." }, "SMTP no configurado.");
@@ -151,8 +151,8 @@ namespace InventoryAPI.Services
             user.StatusId = 2;
             user.Employee.StatusId = 2;
             user.Role = null;
-            user.Employee.CompanyId = user.CompanyId ?? 1;
-            user.CompanyId = user.Employee.CompanyId;
+            user.CompanyId = companyId;
+            user.Employee.CompanyId = companyId;
 
             string clavePlana = user.Password!;
             user.Password = PasswordHashService.HashPassword(clavePlana);
