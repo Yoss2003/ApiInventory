@@ -110,37 +110,6 @@ namespace InventoryAPI.Controllers
             });
         }
 
-        [HttpPost]
-        public async Task<ActionResult<User>> PostUser([FromBody] User user)
-        {
-            if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
-            if (user.RoleId is 1 or 2)
-                return Conflict(new { error = "Usa Gestión Dev para registrar el administrador inicial. El rol desarrollador está protegido." });
-            if (!await access.CanAssignRoleAsync(User, user.RoleId)) return Forbid();
-            if (string.IsNullOrWhiteSpace(user.Password) || user.Password.Length < 12)
-                return BadRequest(new { error = "Se requiere una contraseña de al menos 12 caracteres." });
-
-            int companyId = ObtenerEmpresaSegura();
-            user.CompanyId = companyId;
-
-            var (allowed, licenseError) = await licenseService.CanCreateUserAsync(companyId);
-            if (!allowed) return Conflict(new { error = licenseError });
-
-            var result = await userService.CreateUserAsync(user, env.ContentRootPath);
-            if (!result.Success) return BadRequest(result.Data);
-
-            var created = (User)result.Data;
-            return CreatedAtAction(nameof(GetUser), new { id = created.Id }, new
-            {
-                created.Id,
-                created.Username,
-                created.Email,
-                created.RoleId,
-                created.CompanyId,
-                personalInventoryProvisioned = true
-            });
-        }
-
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteUser(int id)
         {
