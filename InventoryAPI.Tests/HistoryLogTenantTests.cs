@@ -36,7 +36,7 @@ public sealed class HistoryLogTenantTests
             ModuleName = "Ventas",
             ActionName = "Registro"
         };
-        Assert.True(await service.CreateInCompanyAsync(newLog, 1, 10));
+        Assert.True(await service.CreateInCompanyAsync(newLog, 1, 10, isDeveloper: false));
         Assert.Equal(1, newLog.CompanyId);
         Assert.Equal("empresa-a", newLog.Username);
         Assert.NotEqual(DateTime.MinValue, newLog.LogDate);
