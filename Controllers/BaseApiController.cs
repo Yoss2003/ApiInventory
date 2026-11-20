@@ -40,6 +40,7 @@ namespace InventoryAPI.Controllers
         protected IActionResult FromServiceResult(ServiceResult result) => result.Status switch
         {
             ServiceStatus.Ok => result.Payload is null ? Ok() : Ok(result.Payload),
+            ServiceStatus.Created => StatusCode(StatusCodes.Status201Created, result.Payload),
             ServiceStatus.NoContent => NoContent(),
             ServiceStatus.BadRequest => BadRequest(result.Payload ?? new { error = result.Error }),
             ServiceStatus.Forbid => Forbid(),

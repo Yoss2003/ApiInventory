@@ -1,104 +1,80 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using InventoryAPI.Services.IServices;
-using InventoryAPI.Models;
+﻿using InventoryAPI.Models;
 using InventoryAPI.Models.DTO;
+using InventoryAPI.Security;
+using InventoryAPI.Services;
+using InventoryAPI.Services.IServices;
+using Microsoft.AspNetCore.Mvc;
 
 namespace InventoryAPI.Controllers
 {
-    public class EmployeesController(IEmployeeService employeeService) : BaseApiController
+    public class EmployeesController(
+        IEmployeeService employeeService,
+        InventoryAccessPolicy access) : BaseApiController
     {
-        private readonly IEmployeeService _employeeService = employeeService;
-
         [HttpGet]
         public async Task<IActionResult> GetEmployees()
         {
-            int companyId = ObtenerEmpresaSegura();
+            if (!await access.HasAsync(User, InventoryPermissionCodes.ViewUsers)) return Forbid();
+            var companyId = ObtenerEmpresaSegura();
+            if (companyId <= 0) return Unauthorized();
 
-            if (companyId == 0)
-                return Ok(await _employeeService.GetAllAsync());
-
-            return Ok(await _employeeService.GetAllByCompanyIdAsync(companyId));
+            return Ok(await employeeService.GetAllByCompanyIdAsync(companyId));
         }
 
-        [HttpGet("{id}")]
+        [HttpGet("{id:int}")]
         public async Task<IActionResult> GetEmployee(int id)
         {
-            int companyId = ObtenerEmpresaSegura();
-            var employee = await _employeeService.GetByIdAsync(id);
+            if (!await access.HasAsync(User, InventoryPermissionCodes.ViewUsers)) return Forbid();
+            var companyId = ObtenerEmpresaSegura();
+            if (companyId <= 0) return Unauthorized();
 
-            if (employee == null || employee.CompanyId != companyId) return NotFound();
-            return Ok(employee);
+            var employee = await employeeService.GetByIdInCompanyAsync(id, companyId);
+            return employee is null ? NotFound() : Ok(employee);
         }
 
-        [HttpPut("{id}")]
+        [HttpPut("{id:int}")]
         public async Task<IActionResult> PutEmployee(int id, [FromBody] Employee employee)
         {
-            if (id != employee.Id) return BadRequest();
+            if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
             if (!ModelState.IsValid) return BadRequest(ModelState);
+            var companyId = ObtenerEmpresaSegura();
+            if (companyId <= 0) return Unauthorized();
 
-            int companyId = ObtenerEmpresaSegura();
-
-            if (employee.CompanyId <= 0)
-                employee.CompanyId = companyId;
-
-            var success = await _employeeService.UpdateAsync(employee);
-            if (!success) return BadRequest("No se pudo actualizar.");
-
-            return NoContent();
+            return FromServiceResult(await employeeService.UpdateInCompanyAsync(id, employee, companyId));
         }
 
-        [HttpPut("{id}/UpdateWithUser")]
+        [HttpPut("{id:int}/UpdateWithUser")]
         public async Task<IActionResult> UpdateEmployeeWithUser(int id, [FromBody] EmployeeUpdateDTO dto)
         {
-            if (dto == null || dto.Employee == null)
-                return BadRequest("Datos inválidos.");
+            if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
+            var companyId = ObtenerEmpresaSegura();
+            if (companyId <= 0) return Unauthorized();
 
-            if (id != dto.Employee.Id)
-                return BadRequest("El ID del empleado no coincide con la petición.");
-
-            int companyId = ObtenerEmpresaSegura();
-            if (dto.Employee.CompanyId <= 0)
-                dto.Employee.CompanyId = companyId;
-
-            var (success, message) = await _employeeService.UpdateEmployeeWithUserAsync(id, dto);
-
-            if (!success)
-                return BadRequest(message);
-
-            return Ok(new { mensaje = message });
+            return FromServiceResult(await employeeService.UpdateEmployeeWithUserInCompanyAsync(id, dto, companyId));
         }
 
         [HttpPost]
         public async Task<IActionResult> PostEmployee([FromBody] Employee employee)
         {
+            if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
             if (!ModelState.IsValid) return BadRequest(ModelState);
+            var companyId = ObtenerEmpresaSegura();
+            if (companyId <= 0) return Unauthorized();
 
-            int companyId = ObtenerEmpresaSegura();
+            var result = await employeeService.CreateInCompanyAsync(employee, companyId);
+            if (result.Status == ServiceStatus.Created && result.Payload is Employee created)
+                return CreatedAtAction(nameof(GetEmployee), new { id = created.Id }, created);
 
-            if (employee.CompanyId <= 0)
-            {
-                employee.CompanyId = companyId;
-            }
-
-            var success = await _employeeService.CreateAsync(employee);
-            if (!success) return BadRequest("No se pudo crear.");
-
-            return CreatedAtAction(nameof(GetEmployee), new { id = employee.Id }, employee);
+            return FromServiceResult(result);
         }
 
-        [HttpDelete("{id}")]
+        [HttpDelete("{id:int}")]
         public async Task<IActionResult> DeleteEmployee(int id)
         {
-            int companyId = ObtenerEmpresaSegura();
-            string deletedBy = ObtenerUsuarioSeguro().ToString();
+            if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
+            if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
 
-            var existingEmployee = await _employeeService.GetByIdAsync(id);
-            if (existingEmployee == null || existingEmployee.CompanyId != companyId) return NotFound();
-
-            var success = await _employeeService.DeleteAsync(id, deletedBy);
-            if (!success) return BadRequest("No se pudo eliminar.");
-
-            return NoContent();
+            return FromServiceResult(await employeeService.DeleteInCompanyAsync(id, companyId, userId.ToString()));
         }
     }
 }
