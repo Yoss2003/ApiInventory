@@ -187,6 +187,7 @@ public class SaleService(
 
         await using var tx = await db.Database.BeginTransactionAsync();
         var lockedSale = await locks.LockSaleAsync(id, companyId);
+        if (lockedSale is null) return ServiceResult.NotFound("Venta no encontrada.");
 
         var installment = await locks.LockSaleInstallmentAsync(installmentId, id, companyId);
         if (installment is null) return ServiceResult.NotFound();
@@ -210,7 +211,7 @@ public class SaleService(
         if (await db.SaleCancellations.AnyAsync(x => x.CompanyId == companyId && x.SaleId == id))
             return ServiceResult.Conflict("No se pueden abonar cuotas de una venta anulada.");
 
-        var received = lockedSale?.AmountReceived.GetValueOrDefault();
+        var received = lockedSale.AmountReceived.GetValueOrDefault();
         if (installment.PaidAmount < 0 || installment.PaidAmount > installment.InstallmentAmount)
             return ServiceResult.Conflict("La cuota tiene un saldo incoherente. Requiere revisión.");
 
@@ -221,7 +222,7 @@ public class SaleService(
             return ServiceResult.Conflict("Los abonos no cuadran con el saldo de la cuota. Requiere revisión.");
 
         if (request.Amount > installment.InstallmentAmount - installment.PaidAmount ||
-            received + request.Amount > lockedSale?.TotalAmount)
+            received + request.Amount > lockedSale.TotalAmount)
             return ServiceResult.Conflict("El abono supera el saldo pendiente de la cuota o de la venta.");
 
         var receipt = new SaleInstallmentReceipt
@@ -237,7 +238,7 @@ public class SaleService(
         };
 
         installment.PaidAmount += request.Amount;
-        lockedSale?.AmountReceived = received + request.Amount;
+        lockedSale.AmountReceived = received + request.Amount;
         db.SaleInstallmentReceipts.Add(receipt);
 
         try
@@ -255,7 +256,7 @@ public class SaleService(
             receiptId = receipt.Id,
             balance = installment.InstallmentAmount - installment.PaidAmount,
             paidAmount = installment.PaidAmount,
-            totalReceived = lockedSale?.AmountReceived
+            totalReceived = lockedSale.AmountReceived
         });
     }
 
