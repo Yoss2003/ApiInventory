@@ -28,7 +28,7 @@ namespace InventoryAPI.Controllers
         {
             if (id != ObtenerUsuarioSeguro() && !await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
             int companyId = ObtenerEmpresaSegura();
-            var userDto = await userService.GetUserDtoByIdAsync(id);
+            var userDto = await userService.GetUserDtoByIdAsync(id, companyId);
             if (userDto == null || userDto.CompanyId != companyId)
                 return NotFound(new { mensaje = "El usuario no fue localizado o no tienes permisos." });
             return Ok(userDto);
@@ -41,7 +41,7 @@ namespace InventoryAPI.Controllers
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
             int companyId = ObtenerEmpresaSegura();
 
-            var existingUser = await userService.GetUserDtoByIdAsync(id);
+            var existingUser = await userService.GetUserDtoByIdAsync(id, companyId);
             if (existingUser == null || existingUser.CompanyId != companyId)
                 return NotFound(new { mensaje = "El usuario no existe o no pertenece a tu sucursal." });
 
@@ -62,7 +62,7 @@ namespace InventoryAPI.Controllers
                 Password = null
             };
 
-            var (Success, Message) = await userService.UpdateUserAsync(id, userActualizado);
+            var (Success, Message) = await userService.UpdateUserAsync(id, userActualizado, companyId);
             if (!Success)
             {
                 if (Message.Contains("no existe")) return NotFound(new { mensaje = Message });
@@ -117,13 +117,13 @@ namespace InventoryAPI.Controllers
             if (id == ObtenerUsuarioSeguro()) return Conflict(new { error = "No puedes desactivar tu propia cuenta." });
 
             int companyId = ObtenerEmpresaSegura();
-            var existingUser = await userService.GetUserDtoByIdAsync(id);
+            var existingUser = await userService.GetUserDtoByIdAsync(id, companyId);
             if (existingUser == null || existingUser.CompanyId != companyId) return NotFound();
             if (existingUser.RoleId == 1 || (existingUser.RoleId == 2 && !EsDesarrollador)) return Forbid();
             if (existingUser.RoleId == 2 && await userService.CountActiveAdminsAsync(companyId) <= 1)
                 return Conflict(new { error = "No se puede desactivar el último administrador." });
 
-            var success = await userService.DeleteAsync(id, ObtenerUsuarioSeguro().ToString());
+            var success = await userService.DeleteUserInCompanyAsync(id, companyId, ObtenerUsuarioSeguro().ToString());
             return success ? NoContent() : NotFound();
         }
 
@@ -157,7 +157,7 @@ namespace InventoryAPI.Controllers
         public async Task<IActionResult> UpdatePhoto(int id, [FromBody] PhotoUpdateDTO request)
         {
             if (!await CanManageTargetAsync(id)) return Forbid();
-            var result = await userService.UpdatePhotoAsync(id, request.Base64Image, env.ContentRootPath);
+            var result = await userService.UpdatePhotoAsync(id, ObtenerEmpresaSegura(), request.Base64Image, env.ContentRootPath);
             if (!result.Success)
             {
                 if (result.Message.Contains("no encontrado")) return NotFound(new { mensaje = result.Message });
@@ -171,7 +171,7 @@ namespace InventoryAPI.Controllers
         public async Task<IActionResult> Generate2FA(int id)
         {
             if (id != ObtenerUsuarioSeguro()) return Forbid();
-            var (Success, Secret, QrUri) = await userService.Generate2FAAsync(id);
+            var (Success, Secret, QrUri) = await userService.Generate2FAAsync(id, ObtenerEmpresaSegura());
             return Success ? Ok(new { secret = Secret, qrUri = QrUri }) : NotFound();
         }
 
@@ -179,7 +179,7 @@ namespace InventoryAPI.Controllers
         public async Task<IActionResult> Enable2FA(int id, [FromBody] string code)
         {
             if (id != ObtenerUsuarioSeguro()) return Forbid();
-            return await userService.Enable2FAAsync(id, code)
+            return await userService.Enable2FAAsync(id, ObtenerEmpresaSegura(), code)
                 ? Ok(new { mensaje = "Activado" })
                 : BadRequest(new { mensaje = "Inválido" });
         }
@@ -188,7 +188,7 @@ namespace InventoryAPI.Controllers
         public async Task<IActionResult> Disable2FA(int id)
         {
             if (id != ObtenerUsuarioSeguro()) return Forbid();
-            return await userService.Disable2FAAsync(id) ? Ok(new { mensaje = "Desactivado" }) : NotFound();
+            return await userService.Disable2FAAsync(id, ObtenerEmpresaSegura()) ? Ok(new { mensaje = "Desactivado" }) : NotFound();
         }
 
         [HttpPost("TestEmailConfiguration")]
@@ -215,7 +215,7 @@ namespace InventoryAPI.Controllers
             if (!roleId.HasValue) return NotFound();
             if (roleId.Value == 1 || (roleId.Value == 2 && !EsDesarrollador)) return Forbid();
 
-            var (success, message) = await userService.ApproveEmployeeAsync(id);
+            var (success, message) = await userService.ApproveEmployeeAsync(id, ObtenerEmpresaSegura());
             return success ? Ok(new { message }) : Conflict(new { error = message });
         }
 
@@ -226,7 +226,7 @@ namespace InventoryAPI.Controllers
             if (string.IsNullOrWhiteSpace(firebaseInstallationId))
                 return BadRequest(new { mensaje = "El Firebase Installation ID (FID) no puede estar vacío." });
 
-            return await userService.UpdateFcmTokenAsync(id, firebaseInstallationId.Trim())
+            return await userService.UpdateFcmTokenAsync(id, ObtenerEmpresaSegura(), firebaseInstallationId.Trim())
                 ? Ok(new { mensaje = "Firebase Installation ID actualizado correctamente." })
                 : NotFound(new { mensaje = "Usuario no encontrado." });
         }

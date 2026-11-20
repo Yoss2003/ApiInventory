@@ -22,16 +22,6 @@ namespace InventoryAPI.Services
         IConfiguration configuration,
         ISecretProtector secretProtector) : WorkContainer<User>(workFlow), IUserService
     {
-        public async Task<IEnumerable<UserDTO>> GetUsersDtoAsync()
-        {
-            var users = await _workFlow.Repository<User>()
-                .Query(asNoTracking: true)
-                .Include(u => u.Role)
-                .Include(u => u.Employee)
-                .ToListAsync();
-            return [.. users.Select(MapToDto)];
-        }
-
         public async Task<IEnumerable<UserDTO>> GetUsersDtoByCompanyAsync(int companyId)
         {
             var users = await _workFlow.Repository<User>()
@@ -43,13 +33,16 @@ namespace InventoryAPI.Services
             return [.. users.Select(MapToDto)];
         }
 
-        public async Task<UserDTO?> GetUserDtoByIdAsync(int id)
+        public async Task<UserDTO?> GetUserDtoByIdAsync(int id, int companyId)
         {
+            if (companyId <= 0) return null;
+
             var user = await _workFlow.Repository<User>()
                 .Query(asNoTracking: true)
                 .Include(u => u.Role)
                 .Include(u => u.Employee)
-                .FirstOrDefaultAsync(u => u.Id == id);
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
+
             return user is null ? null : MapToDto(user);
         }
 
@@ -73,19 +66,23 @@ namespace InventoryAPI.Services
                 AreaId = u.Employee?.AreaId ?? 0,
                 ContractTypeId = u.Employee?.ContractTypeId ?? 0,
                 RoleId = u.RoleId,
-                CompanyId = u.CompanyId ?? 1
+                CompanyId = u.CompanyId ?? 0
             };
         }
 
-        public async Task<(bool Success, string Message)> UpdateUserAsync(int id, User userActualizado)
+        public async Task<(bool Success, string Message)> UpdateUserAsync(int id, User userActualizado, int companyId)
         {
+            if (companyId <= 0) return (false, "La empresa indicada no es válida.");
             if (id != userActualizado.Id) return (false, "El ID no coincide.");
+            if (userActualizado.CompanyId.HasValue && userActualizado.CompanyId.Value != companyId)
+                return (false, "El usuario no pertenece a la empresa indicada.");
+
             var userDb = await _workFlow.Repository<User>()
                 .Query(asNoTracking: false)
                 .Include(u => u.Role)
                 .Include(u => u.Employee)
-                .FirstOrDefaultAsync(u => u.Id == id);
-            if (userDb == null) return (false, "El usuario no existe.");
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
+            if (userDb == null) return (false, "El usuario no existe o no pertenece a la empresa indicada.");
 
             userDb.Email = userActualizado.Email;
             userDb.Username = userActualizado.Username;
@@ -110,7 +107,7 @@ namespace InventoryAPI.Services
                 if (userActualizado.Employee.JobPositionId > 0) userDb.Employee.JobPositionId = userActualizado.Employee.JobPositionId;
                 if (userActualizado.Employee.ContractTypeId > 0) userDb.Employee.ContractTypeId = userActualizado.Employee.ContractTypeId;
 
-                userDb.Employee.CompanyId = userDb.CompanyId ?? 1;
+                userDb.Employee.CompanyId = companyId;
             }
 
             try
@@ -290,20 +287,28 @@ namespace InventoryAPI.Services
             return (true, targetUser, "Login exitoso", false, false, false);
         }
 
-        public async Task<(bool Success, User? User, string Message)> ChangeInitialPasswordAsync(int userId, string newPassword)
+        public async Task<(bool Success, User? User, string Message)> ChangeInitialPasswordAsync(int userId, int companyId, string newPassword)
         {
-            var user = await _workFlow.Repository<User>().GetByIdAsync(userId);
-            if (user == null) return (false, null, "Usuario no encontrado.");
+            if (companyId <= 0) return (false, null, "Empresa no válida.");
+
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(u => u.Id == userId && u.CompanyId == companyId);
+            if (user == null) return (false, null, "Usuario no encontrado en la empresa indicada.");
             user.Password = PasswordHashService.HashPassword(newPassword);
             user.MustChangePassword = false;
             await _workFlow.CompleteAsync();
             return (true, user, "Contraseña cambiada con éxito.");
         }
 
-        public async Task<(bool Success, string Url, string Message)> UpdatePhotoAsync(int id, string base64Image, string contentRootPath)
+        public async Task<(bool Success, string Url, string Message)> UpdatePhotoAsync(int id, int companyId, string base64Image, string contentRootPath)
         {
-            var user = await _workFlow.Repository<User>().GetByIdAsync(id);
-            if (user == null) return (false, "", "Usuario no encontrado.");
+            if (companyId <= 0) return (false, "", "Empresa no válida.");
+
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
+            if (user == null) return (false, "", "Usuario no encontrado en la empresa indicada.");
             if (!string.IsNullOrEmpty(base64Image))
             {
                 try
@@ -329,9 +334,13 @@ namespace InventoryAPI.Services
             return (false, "", "No se envió ninguna imagen.");
         }
 
-        public async Task<(bool Success, string Secret, string QrUri)> Generate2FAAsync(int id)
+        public async Task<(bool Success, string Secret, string QrUri)> Generate2FAAsync(int id, int companyId)
         {
-            var user = await _workFlow.Repository<User>().GetByIdAsync(id);
+            if (companyId <= 0) return (false, "", "");
+
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
             if (user == null) return (false, "", "");
             var key = KeyGeneration.GenerateRandomKey(20);
             var secret = Base32Encoding.ToString(key);
@@ -341,9 +350,13 @@ namespace InventoryAPI.Services
             return (true, secret, qrUri);
         }
 
-        public async Task<bool> Enable2FAAsync(int id, string code)
+        public async Task<bool> Enable2FAAsync(int id, int companyId, string code)
         {
-            var user = await _workFlow.Repository<User>().GetByIdAsync(id);
+            if (companyId <= 0) return false;
+
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
             if (user == null || string.IsNullOrEmpty(user.TwoFactorSecret)) return false;
             var totp = new Totp(Base32Encoding.ToBytes(user.TwoFactorSecret));
             if (totp.VerifyTotp(code, out _, window: new VerificationWindow(2, 2)))
@@ -355,9 +368,13 @@ namespace InventoryAPI.Services
             return false;
         }
 
-        public async Task<bool> Disable2FAAsync(int id)
+        public async Task<bool> Disable2FAAsync(int id, int companyId)
         {
-            var user = await _workFlow.Repository<User>().GetByIdAsync(id);
+            if (companyId <= 0) return false;
+
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
             if (user == null) return false;
             user.IsTwoFactorEnabled = false;
             user.TwoFactorSecret = null;
@@ -365,12 +382,14 @@ namespace InventoryAPI.Services
             return true;
         }
 
-        public async Task<(bool Success, string Message)> ApproveEmployeeAsync(int id)
+        public async Task<(bool Success, string Message)> ApproveEmployeeAsync(int id, int companyId)
         {
+            if (companyId <= 0) return (false, "La empresa indicada no es válida.");
+
             var user = await _workFlow.Repository<User>()
                 .Query(asNoTracking: false)
                 .Include(u => u.Employee)
-                .FirstOrDefaultAsync(u => u.Id == id);
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
 
             if (user == null) return (false, "Usuario no encontrado en el sistema.");
             if (user.StatusId == 1) return (false, "Este colaborador ya había sido aprobado y activado previamente.");
@@ -382,7 +401,9 @@ namespace InventoryAPI.Services
 
             var configuracion = await _workFlow.Repository<Profile>()
                 .Query(asNoTracking: true)
-                .FirstOrDefaultAsync(p => !string.IsNullOrEmpty(p.SmtpEmail));
+                .FirstOrDefaultAsync(p => p.CompanyId == companyId &&
+                    !string.IsNullOrEmpty(p.SmtpEmail) &&
+                    !string.IsNullOrEmpty(p.SmtpPassword));
 
             if (configuracion != null && !string.IsNullOrEmpty(configuracion.SmtpPassword) && !string.IsNullOrEmpty(user.Email))
             {
@@ -579,9 +600,13 @@ namespace InventoryAPI.Services
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
-        public async Task<bool> UpdateFcmTokenAsync(int userId, string fcmToken)
+        public async Task<bool> UpdateFcmTokenAsync(int userId, int companyId, string fcmToken)
         {
-            var user = await _workFlow.Repository<User>().GetByIdAsync(userId);
+            if (companyId <= 0) return false;
+
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(u => u.Id == userId && u.CompanyId == companyId);
             if (user == null) return false;
 
             if (user.FcmToken != fcmToken)
@@ -593,19 +618,23 @@ namespace InventoryAPI.Services
             return true;
         }
 
-        public async Task<(bool Success, string Message)> ResendWelcomeEmailAsync(int id)
+        public async Task<(bool Success, string Message)> ResendWelcomeEmailAsync(int id, int companyId)
         {
+            if (companyId <= 0) return (false, "La empresa indicada no es válida.");
+
             var userDb = await _workFlow.Repository<User>()
                 .Query(asNoTracking: false)
                 .Include(u => u.Employee)
-                .FirstOrDefaultAsync(u => u.Id == id);
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
 
             if (userDb == null) return (false, "Usuario no encontrado.");
             if (string.IsNullOrWhiteSpace(userDb.Email)) return (false, "El usuario no tiene un correo asignado.");
 
             var perfilConfigurado = await _workFlow.Repository<Profile>()
                 .Query(asNoTracking: true)
-                .FirstOrDefaultAsync(p => !string.IsNullOrEmpty(p.SmtpEmail) && !string.IsNullOrEmpty(p.SmtpPassword));
+                .FirstOrDefaultAsync(p => p.CompanyId == companyId &&
+                    !string.IsNullOrEmpty(p.SmtpEmail) &&
+                    !string.IsNullOrEmpty(p.SmtpPassword));
 
             if (perfilConfigurado == null) return (false, "El servidor de correos SMTP no está configurado.");
 
@@ -619,6 +648,32 @@ namespace InventoryAPI.Services
             _ = EnviarCorreoBienvenidaAsync(userDb, nuevaClavePlana, perfilConfigurado.SmtpEmail!, smtpPassword);
 
             return (true, "Nuevas credenciales generadas y enviadas con éxito.");
+        }
+
+        public async Task<bool> DeleteUserInCompanyAsync(int id, int companyId, string deletedBy = "Sistema")
+        {
+            if (companyId <= 0) return false;
+
+            var user = await _workFlow.Repository<User>()
+                .Query(asNoTracking: false)
+                .FirstOrDefaultAsync(u => u.Id == id && u.CompanyId == companyId);
+
+            if (user == null) return false;
+
+            if (user is InventoryAPI.Models.Interfaces.ISoftDelete softDeleteEntity)
+            {
+                softDeleteEntity.IsActive = false;
+                softDeleteEntity.DeletionDate = DateTime.Now;
+                softDeleteEntity.DeletionUser = deletedBy;
+                _workFlow.Repository<User>().Update(user);
+            }
+            else
+            {
+                _workFlow.Repository<User>().Delete(user);
+            }
+
+            var result = await _workFlow.CompleteAsync();
+            return result > 0;
         }
 
         public Task<int> CountActiveAdminsAsync(int companyId) => _workFlow.Repository<User>().Query(asNoTracking: true)
