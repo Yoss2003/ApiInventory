@@ -95,7 +95,7 @@ namespace InventoryAPI.Controllers
                 CompanyId = companyId
             };
 
-            var result = await userService.CreateUserAsync(user, env.ContentRootPath);
+            var result = await userService.CreateUserAsync(user, companyId, env.ContentRootPath);
             if (!result.Success) return BadRequest(result.Data);
 
             var created = (User)result.Data;
