@@ -17,12 +17,12 @@ public sealed class HistoryLogService(IWorkFlow workFlow, AppDbContext db)
             .FirstOrDefaultAsync(log => log.Id == id && log.CompanyId == companyId);
     }
 
-    public async Task<bool> CreateInCompanyAsync(HistoryLog log, int companyId, int userId)
+    public async Task<bool> CreateInCompanyAsync(HistoryLog log, int companyId, int userId, bool isDeveloper)
     {
         if (companyId <= 0 || userId <= 0) return false;
 
         var username = await db.Users.AsNoTracking()
-            .Where(user => user.Id == userId && user.CompanyId == companyId)
+            .Where(user => user.Id == userId && (isDeveloper ? user.RoleId == 1 : user.CompanyId == companyId))
             .Select(user => user.Username)
             .FirstOrDefaultAsync();
 
