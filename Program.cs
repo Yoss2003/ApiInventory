@@ -46,6 +46,7 @@ builder.Services.AddProblemDetails();
 builder.Services.AddScoped<IWorkFlow, WorkFlow>();
 
 // Registro de TODOS los Servicios
+builder.Services.AddScoped<IPessimisticLockRepository, PessimisticLockRepository>();
 builder.Services.AddScoped<IAccountReceivableService, AccountReceivableService>();
 builder.Services.AddScoped<IActionItemService, ActionItemService>();
 builder.Services.AddScoped<IArticleService, ArticleService>();
@@ -226,7 +227,6 @@ using (var scope = app.Services.CreateScope())
         // Idempotente: aprovisiona el maestro y el inventario personal
         // para empresas/usuarios anteriores a la Fase 3.5 (incluido YosMG).
         // Restauraciones antiguas pueden tener secuencias de usuarios/empleados/inventarios atrasadas.
-        IdentitySequenceRepair.Synchronize(context);
         InventoryProvisioner.EnsureExistingAsync(context).GetAwaiter().GetResult();
 
         // Catálogo de permisos compatible con registros existentes; no se alteran

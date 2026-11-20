@@ -1,5 +1,6 @@
 ﻿using InventoryAPI.Data;
 using InventoryAPI.Models;
+using InventoryAPI.Repositories.IRepositories;
 using InventoryAPI.Security;
 using InventoryAPI.Services.IServices;
 using Microsoft.EntityFrameworkCore;
@@ -10,7 +11,7 @@ using System.Text;
 
 namespace InventoryAPI.Services;
 
-public sealed class PasswordRecoveryService(AppDbContext db, IConfiguration config) : IPasswordRecoveryService
+public sealed class PasswordRecoveryService(AppDbContext db, IPessimisticLockRepository locks, IConfiguration config) : IPasswordRecoveryService
 {
     private static string HashToken(string token) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
@@ -145,14 +146,11 @@ public sealed class PasswordRecoveryService(AppDbContext db, IConfiguration conf
 
         var hash = HashToken(input.Token);
         await using var transaction = await db.Database.BeginTransactionAsync();
-        var r = await db.PasswordRecoveryRequests.FromSqlInterpolated(
-            $"SELECT * FROM \"PasswordRecoveryRequests\" WHERE \"TokenHash\" = {hash} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var r = await locks.LockPasswordRecoveryByHashAsync(hash);
         if (r is null || r.ApprovedAt is null || r.CompletedAt != null || r.ExpiresAt <= DateTime.UtcNow)
             return ServiceResult.BadRequest("Enlace inválido, utilizado o expirado.");
 
-        var user = await db.Users.FromSqlInterpolated(
-            $"SELECT * FROM \"Users\" WHERE \"Id\" = {r.UserId} FOR UPDATE").SingleOrDefaultAsync();
+        var user = await locks.LockUserAsync(r.UserId);
         if (user is null || !user.IsActive || user.CompanyId != r.CompanyId)
             return ServiceResult.BadRequest("Cuenta no disponible.");
 

@@ -10,6 +10,7 @@ namespace InventoryAPI.Services;
 public class SaleService(
     IWorkFlow workFlow,
     AppDbContext db,
+    IPessimisticLockRepository locks,
     IInventoryScopeService inventoryScope) : WorkContainer<Sale>(workFlow), ISaleService
 {
     public async Task<List<Sale>> GetVisibleSalesAsync(int companyId, int userId, bool isDeveloper)
@@ -185,13 +186,9 @@ public class SaleService(
         }
 
         await using var tx = await db.Database.BeginTransactionAsync();
-        var lockedSale = await db.Sales.FromSqlInterpolated(
-            $"SELECT * FROM \"Sales\" WHERE \"Id\" = {id} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleAsync();
+        var lockedSale = await locks.LockSaleAsync(id, companyId);
 
-        var installment = await db.SaleInstallments.FromSqlInterpolated(
-            $"SELECT * FROM \"SaleInstallments\" WHERE \"Id\" = {installmentId} AND \"SaleId\" = {id} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var installment = await locks.LockSaleInstallmentAsync(installmentId, id, companyId);
         if (installment is null) return ServiceResult.NotFound();
 
         var existing = await db.SaleInstallmentReceipts.AsNoTracking()
@@ -306,9 +303,7 @@ public class SaleService(
                 : ServiceResult.Conflict("Operación duplicada.");
 
         await using var tx = await db.Database.BeginTransactionAsync();
-        var article = await db.Articles.FromSqlInterpolated(
-            $"SELECT * FROM \"Articles\" WHERE \"Id\" = {request.ArticleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var article = await locks.LockArticleAsync(request.ArticleId, companyId);
         if (article == null || !article.IsActive)
             return ServiceResult.NotFound("Artículo inactivo o no encontrado.");
 
@@ -456,9 +451,7 @@ public class SaleService(
             return ServiceResult.BadRequest("Escribe un motivo.");
 
         await using var tx = await db.Database.BeginTransactionAsync();
-        var lockedSale = await db.Sales.FromSqlInterpolated(
-            $"SELECT * FROM \"Sales\" WHERE \"Id\" = {id} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var lockedSale = await locks.LockSaleAsync(id, companyId);
         if (lockedSale is null) return ServiceResult.NotFound();
 
         var sale = await db.Sales.Include(x => x.SaleDetails)
@@ -494,9 +487,7 @@ public class SaleService(
         var keys = sale.SaleDetails.Select(d => d.ArticleId).Distinct().OrderBy(x => x).ToArray();
         foreach (var articleId in keys)
         {
-            var article = await db.Articles.FromSqlInterpolated(
-                $"SELECT * FROM \"Articles\" WHERE \"Id\" = {articleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-                .SingleOrDefaultAsync();
+            var article = await locks.LockArticleAsync(articleId, companyId);
             if (article is null)
                 return ServiceResult.NotFound("Falta uno de los artículos de la venta.");
 
@@ -590,9 +581,7 @@ public class SaleService(
             var locked = new Dictionary<int, Article>();
             foreach (var item in summary)
             {
-                var article = await db.Articles.FromSqlInterpolated(
-                    $"SELECT * FROM \"Articles\" WHERE \"Id\" = {item.ArticleId} AND \"CompanyId\" = {sale.CompanyId} FOR UPDATE")
-                    .SingleOrDefaultAsync();
+                var article = await locks.LockArticleAsync(item.ArticleId, sale.CompanyId);
                 if (article == null || !article.IsActive)
                     return (false, $"Artículo #{item.ArticleId} no disponible.");
                 if (article.Tracking.ToString() == "Serialized")

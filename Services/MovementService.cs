@@ -10,6 +10,7 @@ namespace InventoryAPI.Services;
 public class MovementService(
     IWorkFlow workFlow,
     AppDbContext db,
+    IPessimisticLockRepository locks,
     IInventoryScopeService inventoryScope) : WorkContainer<Movement>(workFlow), IMovementService
 {
     public async Task<ServiceResult> GetMasterHistoryAsync(
@@ -157,9 +158,7 @@ public class MovementService(
             throw new ArgumentException("Para asignaciones usa /api/Assignments; solo entradas (1) y salidas (2) son admitidas aquí.");
 
         await using var transaction = await db.Database.BeginTransactionAsync();
-        var article = await db.Articles.FromSqlInterpolated(
-            $"SELECT * FROM \"Articles\" WHERE \"Id\" = {movement.ArticleId} AND \"CompanyId\" = {movement.CompanyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var article = await locks.LockArticleAsync(movement.ArticleId, movement.CompanyId);
         if (article is null || !article.IsActive)
             throw new InvalidOperationException("Artículo inexistente o inactivo.");
         if (article.Tracking.ToString() == "Serialized" && movement.Amount != decimal.Truncate(movement.Amount.Value))
@@ -188,9 +187,7 @@ public class MovementService(
             return (false, "Indica el motivo de anulación.");
 
         await using var transaction = await db.Database.BeginTransactionAsync();
-        var movement = await db.Movements.FromSqlInterpolated(
-            $"SELECT * FROM \"Movements\" WHERE \"Id\" = {originalId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var movement = await locks.LockMovementAsync(originalId, companyId);
         if (movement == null) return (false, "Movimiento inexistente.");
         if (movement.ActionId is not (1 or 2))
             return (false, "Las asignaciones se revierten mediante devolución, no anulación.");
@@ -201,9 +198,7 @@ public class MovementService(
         if (await db.MovementCancellations.AnyAsync(c => c.OriginalMovementId == originalId))
             return (false, "Este movimiento ya fue anulado.");
 
-        var article = await db.Articles.FromSqlInterpolated(
-            $"SELECT * FROM \"Articles\" WHERE \"Id\" = {movement.ArticleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var article = await locks.LockArticleAsync(movement.ArticleId, companyId);
         if (article == null) return (false, "Artículo original inexistente.");
 
         var delta = movement.ActionId == 1 ? -(movement.Amount ?? 0m) : (movement.Amount ?? 0m);

@@ -1,5 +1,6 @@
 ﻿using InventoryAPI.Data;
 using InventoryAPI.Models;
+using InventoryAPI.Repositories.IRepositories;
 using InventoryAPI.Services.IServices;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,6 +8,7 @@ namespace InventoryAPI.Services;
 
 public sealed class SerialUnitService(
     AppDbContext db,
+    IPessimisticLockRepository locks,
     IInventoryScopeService inventoryScope) : ISerialUnitService
 {
     public async Task<ServiceResult> GetAvailableUnitsAsync(int articleId, int companyId, int userId, bool isDeveloper)
@@ -55,9 +57,7 @@ public sealed class SerialUnitService(
             return ServiceResult.BadRequest("Serie inválida.");
 
         await using var tx = await db.Database.BeginTransactionAsync();
-        var article = await db.Articles.FromSqlInterpolated(
-            $"SELECT * FROM \"Articles\" WHERE \"Id\" = {articleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var article = await locks.LockArticleAsync(articleId, companyId);
         if (article is null || !article.IsActive) return ServiceResult.NotFound();
 
         if (!await inventoryScope.GetAccessibleInventoryIds(companyId, userId, isDeveloper, requireWrite: true, excludeMaster: false).ContainsAsync(article.InventoryId))
@@ -180,9 +180,7 @@ public sealed class SerialUnitService(
             return ServiceResult.BadRequest("El lote contiene números de serie duplicados.");
 
         await using var tx = await db.Database.BeginTransactionAsync();
-        var article = await db.Articles.FromSqlInterpolated(
-            $"SELECT * FROM \"Articles\" WHERE \"Id\" = {articleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var article = await locks.LockArticleAsync(articleId, companyId);
         if (article is null || !article.IsActive) return ServiceResult.NotFound();
 
         if (!await inventoryScope.GetAccessibleInventoryIds(companyId, userId, isDeveloper, requireWrite: true, excludeMaster: false).ContainsAsync(article.InventoryId))
@@ -298,9 +296,7 @@ public sealed class SerialUnitService(
             return ServiceResult.BadRequest("Indica la unidad y un motivo de baja de entre 5 y 500 caracteres.");
 
         await using var tx = await db.Database.BeginTransactionAsync();
-        var article = await db.Articles.FromSqlInterpolated(
-            $"SELECT * FROM \"Articles\" WHERE \"Id\" = {articleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var article = await locks.LockArticleAsync(articleId, companyId);
         if (article is null) return ServiceResult.NotFound();
 
         if (!await inventoryScope.GetAccessibleInventoryIds(companyId, userId, isDeveloper, requireWrite: true, excludeMaster: false).ContainsAsync(article.InventoryId))

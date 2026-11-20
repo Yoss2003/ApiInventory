@@ -10,6 +10,7 @@ namespace InventoryAPI.Services
     public class ParametersService(
         IWorkFlow workFlow,
         AppDbContext db,
+        IPessimisticLockRepository locks,
         IInventoryScopeService inventoryScope) : WorkContainer<Parameters>(workFlow), IParametersService
     {
         private static bool IsSecret(Parameters parameter)
@@ -91,7 +92,7 @@ namespace InventoryAPI.Services
                 return ServiceResult.Forbid();
 
             await using var tx = await db.Database.BeginTransactionAsync();
-            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(20261107, {companyId})");
+            await locks.AcquireCompanyAdvisoryLockAsync(20261107, companyId);
 
             var existing = await db.Parameters.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && (p.InventoryId == 0 || p.InventoryId == masterId.Value))

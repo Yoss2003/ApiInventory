@@ -1,5 +1,6 @@
 ﻿using InventoryAPI.Data;
 using InventoryAPI.Models;
+using InventoryAPI.Repositories.IRepositories;
 using InventoryAPI.Services.IServices;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,6 +10,7 @@ public sealed class AssignmentService(
     AppDbContext db,
     IWebHostEnvironment environment,
     IPrivateMediaStorage storage,
+    IPessimisticLockRepository locks,
     ILogger<AssignmentService> logger) : IAssignmentService
 {
     private IQueryable<ArticleAssignment> Visible(int companyId, int userId, bool isDeveloper) =>
@@ -84,9 +86,7 @@ public sealed class AssignmentService(
             return ServiceResult.BadRequest("El usuario destinatario no pertenece a tu empresa.");
 
         await using var transaction = await db.Database.BeginTransactionAsync();
-        var article = await db.Articles.FromSqlInterpolated(
-            $"SELECT * FROM \"Articles\" WHERE \"Id\" = {request.ArticleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var article = await locks.LockArticleAsync(request.ArticleId, companyId);
         if (article == null || !article.IsActive)
             return ServiceResult.NotFound("Artículo no encontrado o inactivo.");
 
@@ -277,9 +277,7 @@ public sealed class AssignmentService(
                 : ServiceResult.Conflict("Operación duplicada.");
 
         await using var transaction = await db.Database.BeginTransactionAsync();
-        var assignment = await db.ArticleAssignments.FromSqlInterpolated(
-            $"SELECT * FROM \"ArticleAssignments\" WHERE \"Id\" = {id} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var assignment = await locks.LockAssignmentAsync(id, companyId);
         if (assignment is null) return ServiceResult.NotFound();
 
         var owns = isDeveloper || assignment.AssignedByUserId == userId ||
@@ -290,9 +288,7 @@ public sealed class AssignmentService(
         if (assignment.Quantity - assignment.ReturnedQuantity < request.Quantity)
             return ServiceResult.Conflict("La devolución supera el saldo pendiente.");
 
-        var article = await db.Articles.FromSqlInterpolated(
-            $"SELECT * FROM \"Articles\" WHERE \"Id\" = {assignment.ArticleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-            .SingleOrDefaultAsync();
+        var article = await locks.LockArticleAsync(assignment.ArticleId, companyId);
         if (article is null)
             return ServiceResult.NotFound("Artículo original no encontrado.");
 

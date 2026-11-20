@@ -11,6 +11,7 @@ namespace InventoryAPI.Services
     public class InstallmentPaymentService(
         IWorkFlow workFlow,
         AppDbContext db,
+        IPessimisticLockRepository locks,
         IInventoryScopeService inventoryScope) : WorkContainer<InstallmentPayment>(workFlow), IInstallmentPaymentService
     {
         public async Task<List<InstallmentPayment>> GetVisiblePaymentsAsync(int companyId, int userId, bool isDeveloper)
@@ -116,9 +117,7 @@ namespace InventoryAPI.Services
                 return ServiceResult.Forbid();
 
             await using var tx = await db.Database.BeginTransactionAsync();
-            var sale = await db.Sales.FromSqlInterpolated(
-                $"SELECT * FROM \"Sales\" WHERE \"Id\" = {saleId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-                .SingleOrDefaultAsync();
+            var sale = await locks.LockSaleAsync(saleId, companyId);
             if (sale is null || sale.PaymentType != PaymentType.Cuotas)
                 return ServiceResult.Conflict("La cuota no corresponde a una venta a crédito.");
 
@@ -132,9 +131,7 @@ namespace InventoryAPI.Services
             if (await db.SaleCancellations.AnyAsync(c => c.SaleId == saleId && c.CompanyId == companyId))
                 return ServiceResult.Conflict("La venta fue anulada y no admite abonos.");
 
-            var installment = await db.AccountsReceivables.FromSqlInterpolated(
-                $"SELECT * FROM \"AccountsReceivables\" WHERE \"Id\" = {request.InstallmentId} AND \"CompanyId\" = {companyId} FOR UPDATE")
-                .SingleOrDefaultAsync();
+            var installment = await locks.LockAccountReceivableAsync(request.InstallmentId, companyId);
             if (installment is null || installment.MovementId != movement.Id ||
                 installment.Status is "Cancelled" or "Canceled")
                 return ServiceResult.Conflict("La cuota fue cancelada o no está disponible.");

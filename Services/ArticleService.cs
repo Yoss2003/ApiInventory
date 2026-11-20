@@ -10,6 +10,7 @@ namespace InventoryAPI.Services
     public class ArticleService(
         IWorkFlow workFlow,
         AppDbContext db,
+        IPessimisticLockRepository locks,
         IInventoryScopeService inventoryScope) : WorkContainer<Article>(workFlow), IArticleService
     {
         public async Task<List<Article>> GetVisibleArticlesAsync(int companyId, int userId, bool isDeveloper)
@@ -123,9 +124,7 @@ namespace InventoryAPI.Services
             if (error is not null) return ServiceResult.BadRequest(error);
 
             await using var tx = await db.Database.BeginTransactionAsync();
-            var current = await db.Articles.FromSqlInterpolated(
-                $"SELECT * FROM \"Articles\" WHERE \"Id\" = {id} AND \"CompanyId\" = {companyId} FOR UPDATE")
-                .SingleOrDefaultAsync();
+            var current = await locks.LockArticleAsync(id, companyId);
             if (current is null) return ServiceResult.NotFound();
 
             await db.Entry(current).Collection(a => a.Details).LoadAsync();
