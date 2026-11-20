@@ -1,99 +1,61 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using InventoryAPI.Services.IServices;
 using InventoryAPI.Models;
+using InventoryAPI.Services.IServices;
+using Microsoft.AspNetCore.Mvc;
 
-namespace InventoryAPI.Controllers
+namespace InventoryAPI.Controllers;
+
+public sealed class ExportRoutesController(IExportRouteService exportRouteService) : BaseApiController
 {
-    public class ExportRoutesController(IExportRouteService exportRouteService) : BaseApiController
+    [HttpGet]
+    public async Task<IActionResult> GetExportRoutes()
     {
-        private readonly IExportRouteService _exportRouteService = exportRouteService;
+        var userId = ObtenerUsuarioSeguro();
+        if (userId <= 0) return Unauthorized();
+        return Ok(await exportRouteService.GetAllForUserAsync(userId));
+    }
 
-        [HttpGet]
-        public async Task<IActionResult> GetExportRoutes()
-        {
-            try
-            {
-                var routes = await _exportRouteService.GetAllAsync();
-                return Ok(routes);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error interno del servidor: {ex.Message}");
-            }
-        }
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetExportRoute(int id)
+    {
+        var userId = ObtenerUsuarioSeguro();
+        if (userId <= 0) return Unauthorized();
 
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetExportRoute(int id)
-        {
-            try
-            {
-                var route = await _exportRouteService.GetByIdAsync(id);
-                if (route == null) return NotFound();
-                return Ok(route);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error interno del servidor: {ex.Message}");
-            }
-        }
+        var route = await exportRouteService.GetByIdForUserAsync(id, userId);
+        return route is null ? NotFound() : Ok(route);
+    }
 
-        [HttpPut("{id}")]
-        public async Task<IActionResult> PutExportRoute(int id, [FromBody] ExportRoute exportRoute)
-        {
-            if (id != exportRoute.Id) return BadRequest();
-            if (!ModelState.IsValid) return BadRequest(ModelState);
-            try
-            {
-                var existing = await _exportRouteService.GetByIdAsync(id);
-                if (existing == null) return NotFound();
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> PutExportRoute(int id, [FromBody] ExportRoute exportRoute)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var userId = ObtenerUsuarioSeguro();
+        if (userId <= 0) return Unauthorized();
+        if (id != exportRoute.Id) return BadRequest(new { error = "El ID de la ruta no coincide." });
 
-                var success = await _exportRouteService.UpdateAsync(exportRoute);
-                if (!success) return BadRequest("No se pudo actualizar la ruta de exportación.");
+        var updated = await exportRouteService.UpdateForUserAsync(id, exportRoute, userId);
+        return updated ? NoContent() : NotFound();
+    }
 
-                return NoContent();
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error interno del servidor: {ex.Message}");
-            }
-        }
+    [HttpPost]
+    public async Task<IActionResult> PostExportRoute([FromBody] ExportRoute exportRoute)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+        var userId = ObtenerUsuarioSeguro();
+        if (userId <= 0) return Unauthorized();
 
-        [HttpPost]
-        public async Task<ActionResult<ExportRoute>> PostExportRoute([FromBody] ExportRoute exportRoute)
-        {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
-            try
-            {
-                var success = await _exportRouteService.CreateAsync(exportRoute);
-                if (!success) return BadRequest("No se pudo crear la ruta de exportación.");
+        var created = await exportRouteService.CreateForUserAsync(exportRoute, userId);
+        if (!created) return BadRequest(new { error = "No se pudo crear la ruta de exportación." });
 
-                return CreatedAtAction(nameof(GetExportRoute), new { id = exportRoute.Id }, exportRoute);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error interno del servidor: {ex.Message}");
-            }
-        }
+        return CreatedAtAction(nameof(GetExportRoute), new { id = exportRoute.Id }, exportRoute);
+    }
 
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteExportRoute(int id)
-        {
-            try
-            {
-                string deletedBy = ObtenerUsuarioSeguro().ToString();
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteExportRoute(int id)
+    {
+        var userId = ObtenerUsuarioSeguro();
+        if (userId <= 0) return Unauthorized();
 
-                var existing = await _exportRouteService.GetByIdAsync(id);
-                if (existing == null) return NotFound();
-
-                var success = await _exportRouteService.DeleteAsync(id, deletedBy);
-                if (!success) return BadRequest("No se pudo eliminar la ruta de exportación.");
-
-                return NoContent();
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error interno del servidor: {ex.Message}");
-            }
-        }
+        var deleted = await exportRouteService.DeleteForUserAsync(id, userId, userId.ToString());
+        return deleted ? NoContent() : NotFound();
     }
 }
