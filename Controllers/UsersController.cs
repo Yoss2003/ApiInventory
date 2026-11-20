@@ -162,7 +162,7 @@ namespace InventoryAPI.Controllers
             {
                 if (result.Message.Contains("no encontrado")) return NotFound(new { mensaje = result.Message });
                 if (result.Message.Contains("ninguna imagen")) return BadRequest(new { mensaje = result.Message });
-                return StatusCode(500, new { mensaje = "Fallo al guardar imagen en Somee.", detalle = result.Message });
+                return StatusCode(500, new { mensaje = "No fue posible guardar la imagen. Intenta nuevamente." });
             }
             return Ok(new { result.Url, mensaje = result.Message });
         }
@@ -175,6 +175,7 @@ namespace InventoryAPI.Controllers
             return Success ? Ok(new { secret = Secret, qrUri = QrUri }) : NotFound();
         }
 
+        [EnableRateLimiting("auth")]
         [HttpPost("{id}/enable-2fa")]
         public async Task<IActionResult> Enable2FA(int id, [FromBody] string code)
         {
@@ -191,6 +192,7 @@ namespace InventoryAPI.Controllers
             return await userService.Disable2FAAsync(id, ObtenerEmpresaSegura()) ? Ok(new { mensaje = "Desactivado" }) : NotFound();
         }
 
+        [EnableRateLimiting("auth")]
         [HttpPost("TestEmailConfiguration")]
         public async Task<IActionResult> TestEmailConfiguration([FromBody] SmtpTestRequest request)
         {
@@ -199,7 +201,7 @@ namespace InventoryAPI.Controllers
                 return BadRequest(new { mensaje = "El correo y la contraseña son obligatorios." });
 
             var (Success, Message) = await userService.TestEmailConnectionAsync(request.Email, request.Password);
-            return Success ? Ok(new { mensaje = Message }) : StatusCode(500, new { error = "Fallo de conexión", detalle = Message });
+            return Success ? Ok(new { mensaje = Message }) : StatusCode(502, new { error = "No fue posible completar la prueba SMTP. Verifica la configuración y los registros del servidor." });
         }
 
         [HttpGet("ApproveAccount/{id:int}")]
