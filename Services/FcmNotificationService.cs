@@ -1,35 +1,38 @@
 ﻿using FirebaseAdmin.Messaging;
 using InventoryAPI.Services.IServices;
 
-namespace InventoryAPI.Services
+namespace InventoryAPI.Services;
+
+public sealed class FcmNotificationService(ILogger<FcmNotificationService> logger) : IFcmNotificationService
 {
-    public class FcmNotificationService : IFcmNotificationService
+    public async Task<bool> SendPushNotificationAsync(
+        string firebaseInstallationId,
+        string title,
+        string body,
+        Dictionary<string, string>? dataPayload = null)
     {
-        public async Task<bool> SendPushNotificationAsync(string fcmToken, string title, string body, Dictionary<string, string>? dataPayload = null)
+        if (string.IsNullOrWhiteSpace(firebaseInstallationId)) return false;
+
+        try
         {
-            if (string.IsNullOrWhiteSpace(fcmToken)) return false;
-
-            try
+            var message = new Message
             {
-                var message = new Message()
+                Fid = firebaseInstallationId.Trim(),
+                Notification = new Notification
                 {
-                    Fid = fcmToken,
-                    Notification = new Notification
-                    {
-                        Title = title,
-                        Body = body
-                    },
-                    Data = dataPayload ?? []
-                };
+                    Title = title,
+                    Body = body
+                },
+                Data = dataPayload ?? []
+            };
 
-                string response = await FirebaseMessaging.DefaultInstance.SendAsync(message);
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"Queja de Google Firebase: {ex.Message}");
-            }
+            await FirebaseMessaging.DefaultInstance.SendAsync(message);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error al enviar notificación push por Firebase FID.");
+            return false;
         }
     }
 }

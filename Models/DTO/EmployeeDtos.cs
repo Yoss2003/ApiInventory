@@ -22,7 +22,6 @@ public sealed record EmployeeReadDto(
 
 public sealed class EmployeeWriteDto
 {
-    public int Id { get; set; }
     public int? UserId { get; set; }
 
     [StringLength(150)]

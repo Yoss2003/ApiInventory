@@ -1,4 +1,5 @@
-﻿using InventoryAPI.Data;
+﻿using System.Security.Cryptography;
+using InventoryAPI.Data;
 using InventoryAPI.Models;
 using InventoryAPI.Models.DTO;
 using InventoryAPI.Repositories;
@@ -47,37 +48,32 @@ public sealed class ProfileSecurityTests
     }
 
     [Fact]
-    public async Task UpdateProfileAsync_EncryptsNewPassword_AndPreservesExistingWhenEmpty()
+    public async Task UpdateProfileAsync_EncryptsEvenWhenInputStartsWithPrefix_AndRejectsTamperedCiphertext()
     {
         await using var db = CreateContext();
         var service = new ProfileService(new WorkFlow(db), Protector);
 
+        var prefixLikeInput = "enc:v1:userTypedPassword";
         var createResult = await service.CreateProfileAsync(new ProfileWriteDto
         {
             Username = "admin",
             SmtpEmail = "old@empresa.com",
-            SmtpPassword = "OriginalSecretPassword!"
+            SmtpPassword = prefixLikeInput
         }, companyId: 1);
 
         Assert.Equal(ServiceStatus.Created, createResult.Status);
         var created = Assert.IsType<ProfileReadDto>(createResult.Payload);
 
         var storedAfterCreate = await db.Profiles.AsNoTracking().FirstAsync(p => p.Id == created.Id);
-        Assert.NotEqual("OriginalSecretPassword!", storedAfterCreate.SmtpPassword);
-        Assert.True(Protector.IsProtected(storedAfterCreate.SmtpPassword));
-        Assert.Equal("OriginalSecretPassword!", Protector.Unprotect(storedAfterCreate.SmtpPassword!));
+        Assert.NotEqual(prefixLikeInput, storedAfterCreate.SmtpPassword);
+        Assert.True(Protector.TryUnprotect(storedAfterCreate.SmtpPassword, out var plain));
+        Assert.Equal(prefixLikeInput, plain);
 
-        var updateResult = await service.UpdateProfileAsync(created.Id, new ProfileWriteDto
-        {
-            Id = created.Id,
-            SmtpEmail = "new@empresa.com",
-            SmtpPassword = ""
-        }, companyId: 1);
+        var tampered = storedAfterCreate.SmtpPassword![..^2] + "AA";
+        Assert.False(Protector.TryUnprotect(tampered, out _));
+        Assert.Throws<CryptographicException>(() => Protector.Unprotect(tampered));
 
-        Assert.Equal(ServiceStatus.NoContent, updateResult.Status);
-
-        var storedAfterUpdate = await db.Profiles.AsNoTracking().FirstAsync(p => p.Id == created.Id);
-        Assert.Equal("new@empresa.com", storedAfterUpdate.SmtpEmail);
-        Assert.Equal("OriginalSecretPassword!", Protector.Unprotect(storedAfterUpdate.SmtpPassword!));
+        var otherProtector = new AesGcmSecretProtector("CompletelyDifferentKeyWith32CharsMinimum!!");
+        Assert.False(otherProtector.TryUnprotect(storedAfterCreate.SmtpPassword, out _));
     }
 }

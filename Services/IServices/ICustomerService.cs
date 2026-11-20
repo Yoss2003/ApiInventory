@@ -10,7 +10,7 @@ namespace InventoryAPI.Services.IServices
         Task<CustomerReadDto?> GetCustomerByIdAsync(int id, int companyId);
         Task<ServiceResult> CreateCustomerAsync(CustomerWriteDto dto, int companyId);
         Task<ServiceResult> UpdateCustomerAsync(int id, CustomerWriteDto dto, int companyId);
-        Task<ServiceResult> DeleteCustomerAsync(int id, int companyId, string deletedBy);
+        Task<ServiceResult> DeleteCustomerAsync(int id, int companyId);
         Task<(bool IsSuccess, string DataOrError)> ConsultarDniExternoAsync(string dni);
     }
 }

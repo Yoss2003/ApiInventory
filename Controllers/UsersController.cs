@@ -20,8 +20,7 @@ namespace InventoryAPI.Controllers
         {
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
             int companyId = ObtenerEmpresaSegura();
-            var users = await userService.GetUsersDtoAsync();
-            return Ok(users.Where(u => u.CompanyId == companyId).ToList());
+            return Ok(await userService.GetUsersDtoByCompanyAsync(companyId));
         }
 
         [HttpGet("{id}")]
@@ -36,31 +35,79 @@ namespace InventoryAPI.Controllers
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> PutUser(int id, [FromBody] User userActualizado)
+        public async Task<IActionResult> PutUser(int id, [FromBody] UserUpdateAdminDto dto)
         {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
             int companyId = ObtenerEmpresaSegura();
-            userActualizado.CompanyId = companyId;
 
             var existingUser = await userService.GetUserDtoByIdAsync(id);
             if (existingUser == null || existingUser.CompanyId != companyId)
                 return NotFound(new { mensaje = "El usuario no existe o no pertenece a tu sucursal." });
 
             if (existingUser.RoleId == 1 || (existingUser.RoleId == 2 && !EsDesarrollador)) return Forbid();
-            if (userActualizado.RoleId is 1 or 2) return Forbid();
-            if (userActualizado.RoleId > 0 && !await access.CanAssignRoleAsync(User, userActualizado.RoleId)) return Forbid();
-            if (id == ObtenerUsuarioSeguro() && userActualizado.RoleId > 0 && userActualizado.RoleId != existingUser.RoleId)
+            if (dto.RoleId is 1 or 2) return Forbid();
+            if (dto.RoleId > 0 && !await access.CanAssignRoleAsync(User, dto.RoleId)) return Forbid();
+            if (id == ObtenerUsuarioSeguro() && dto.RoleId > 0 && dto.RoleId != existingUser.RoleId)
                 return Conflict(new { error = "No puedes cambiar tu propio rol." });
 
-            userActualizado.Password = null;
+            var userActualizado = new User
+            {
+                Id = id,
+                CompanyId = companyId,
+                Username = dto.Username ?? existingUser.Username,
+                Email = dto.Email ?? existingUser.Email,
+                RoleId = dto.RoleId > 0 ? dto.RoleId : existingUser.RoleId,
+                IsActive = dto.IsActive ?? existingUser.IsActive,
+                Password = null
+            };
+
             var (Success, Message) = await userService.UpdateUserAsync(id, userActualizado);
             if (!Success)
             {
                 if (Message.Contains("no existe")) return NotFound(new { mensaje = Message });
                 if (Message.Contains("no coincide")) return BadRequest(new { mensaje = Message });
-                return StatusCode(500, new { error = "Error al editar", detalle = Message });
+                return StatusCode(500, new { error = "Error al editar el usuario." });
             }
             return NoContent();
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> PostUser([FromBody] UserCreateAdminDto dto)
+        {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+            if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
+            if (dto.RoleId is 1 or 2)
+                return Conflict(new { error = "Usa Gestión Dev para registrar el administrador inicial. El rol desarrollador está protegido." });
+            if (!await access.CanAssignRoleAsync(User, dto.RoleId)) return Forbid();
+
+            int companyId = ObtenerEmpresaSegura();
+
+            var (allowed, licenseError) = await licenseService.CanCreateUserAsync(companyId);
+            if (!allowed) return Conflict(new { error = licenseError });
+
+            var user = new User
+            {
+                Username = dto.Username.Trim(),
+                Email = dto.Email.Trim(),
+                Password = dto.Password,
+                RoleId = dto.RoleId,
+                CompanyId = companyId
+            };
+
+            var result = await userService.CreateUserAsync(user, env.ContentRootPath);
+            if (!result.Success) return BadRequest(result.Data);
+
+            var created = (User)result.Data;
+            return CreatedAtAction(nameof(GetUser), new { id = created.Id }, new
+            {
+                created.Id,
+                created.Username,
+                created.Email,
+                created.RoleId,
+                created.CompanyId,
+                personalInventoryProvisioned = true
+            });
         }
 
         [HttpPost]
@@ -203,31 +250,33 @@ namespace InventoryAPI.Controllers
             return success ? Ok(new { message }) : Conflict(new { error = message });
         }
 
-        [HttpPut("{id}/fcm-token")]
-        public async Task<IActionResult> UpdateFcmToken(int id, [FromBody] string fcmToken)
+        [HttpPut("{id}/firebase-installation-id")]
+        public async Task<IActionResult> UpdateFirebaseInstallationId(int id, [FromBody] string firebaseInstallationId)
         {
             if (id != ObtenerUsuarioSeguro()) return Forbid();
-            if (string.IsNullOrWhiteSpace(fcmToken)) return BadRequest(new { mensaje = "El token no puede estar vacío." });
-            return await userService.UpdateFcmTokenAsync(id, fcmToken)
-                ? Ok(new { mensaje = "Token de notificaciones actualizado correctamente." })
+            if (string.IsNullOrWhiteSpace(firebaseInstallationId))
+                return BadRequest(new { mensaje = "El Firebase Installation ID (FID) no puede estar vacío." });
+
+            return await userService.UpdateFcmTokenAsync(id, firebaseInstallationId.Trim())
+                ? Ok(new { mensaje = "Firebase Installation ID actualizado correctamente." })
                 : NotFound(new { mensaje = "Usuario no encontrado." });
         }
 
         [HttpPost("test-push")]
-        public async Task<IActionResult> TestPushNotification([FromBody] string fcmToken)
+        public async Task<IActionResult> TestPushNotification([FromBody] string firebaseInstallationId)
         {
             if (!EsDesarrollador) return Forbid();
-            var path = Path.Combine(env.ContentRootPath, "firebase-key.json");
-            if (!System.IO.File.Exists(path))
-                return StatusCode(500, new { mensaje = $"ERROR 1: Archivo clave no encontrado en {path}" });
+            if (string.IsNullOrWhiteSpace(firebaseInstallationId))
+                return BadRequest(new { mensaje = "El Firebase Installation ID (FID) es obligatorio." });
             if (FirebaseAdmin.FirebaseApp.DefaultInstance == null)
-                return StatusCode(500, new { mensaje = "ERROR 2: Firebase no inicializado." });
+                return StatusCode(500, new { mensaje = "Firebase no está inicializado en el servidor." });
 
             bool result = await fcmNotificationService.SendPushNotificationAsync(
-                fcmToken, "¡Prueba de Fuego!", "Notificación enviada desde InventoryAPI.");
+                firebaseInstallationId, "Prueba OmniStock", "Notificación enviada desde InventoryAPI.");
+
             return result
-                ? Ok(new { mensaje = "¡Notificación enviada con éxito a Firebase!" })
-                : StatusCode(500, new { mensaje = "ERROR 3: Falló el envío en FcmNotificationService." });
+                ? Ok(new { mensaje = "Notificación enviada con éxito a Firebase." })
+                : StatusCode(500, new { mensaje = "No se pudo enviar la notificación. Revisa los registros del servidor." });
         }
 
         [HttpPost("{id}/resend-welcome")]

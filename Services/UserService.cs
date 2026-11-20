@@ -17,7 +17,10 @@ using System.Text;
 
 namespace InventoryAPI.Services
 {
-    public class UserService(IWorkFlow workFlow, IConfiguration configuration) : WorkContainer<User>(workFlow), IUserService
+    public class UserService(
+        IWorkFlow workFlow,
+        IConfiguration configuration,
+        ISecretProtector secretProtector) : WorkContainer<User>(workFlow), IUserService
     {
         public async Task<IEnumerable<UserDTO>> GetUsersDtoAsync()
         {
@@ -25,6 +28,17 @@ namespace InventoryAPI.Services
                 .Query(asNoTracking: true)
                 .Include(u => u.Role)
                 .Include(u => u.Employee)
+                .ToListAsync();
+            return [.. users.Select(MapToDto)];
+        }
+
+        public async Task<IEnumerable<UserDTO>> GetUsersDtoByCompanyAsync(int companyId)
+        {
+            var users = await _workFlow.Repository<User>()
+                .Query(asNoTracking: true)
+                .Include(u => u.Role)
+                .Include(u => u.Employee)
+                .Where(u => u.CompanyId == companyId)
                 .ToListAsync();
             return [.. users.Select(MapToDto)];
         }
@@ -202,8 +216,9 @@ namespace InventoryAPI.Services
                 await _workFlow.CommitTransactionAsync();
 
                 string nombreFiltro = $"{user.Employee.FirstName} {user.Employee.LastName}".Trim();
-                _ = EnviarCorreoAprobacionAsync(user, nombreFiltro, perfilConfigurado.SmtpEmail!, perfilConfigurado.SmtpPassword!, perfilConfigurado.SmtpApproverEmail!);
-                _ = EnviarCorreoBienvenidaAsync(user, clavePlana, perfilConfigurado.SmtpEmail!, perfilConfigurado.SmtpPassword!);
+                string smtpPassword = secretProtector.Unprotect(perfilConfigurado.SmtpPassword!);
+                _ = EnviarCorreoAprobacionAsync(user, nombreFiltro, perfilConfigurado.SmtpEmail!, smtpPassword, perfilConfigurado.SmtpApproverEmail!);
+                _ = EnviarCorreoBienvenidaAsync(user, clavePlana, perfilConfigurado.SmtpEmail!, smtpPassword);
 
                 return (true, user, "Usuario creado exitosamente.");
             }
@@ -369,9 +384,10 @@ namespace InventoryAPI.Services
                 .Query(asNoTracking: true)
                 .FirstOrDefaultAsync(p => !string.IsNullOrEmpty(p.SmtpEmail));
 
-            if (configuracion != null && !string.IsNullOrEmpty(user.Email))
+            if (configuracion != null && !string.IsNullOrEmpty(configuracion.SmtpPassword) && !string.IsNullOrEmpty(user.Email))
             {
-                _ = EnviarCorreoActivacionExitosaAsync(user, configuracion.SmtpEmail!, configuracion.SmtpPassword!);
+                string smtpPassword = secretProtector.Unprotect(configuracion.SmtpPassword);
+                _ = EnviarCorreoActivacionExitosaAsync(user, configuracion.SmtpEmail!, smtpPassword);
             }
 
             return (true, "El colaborador ha sido activado exitosamente y ya puede ingresar al sistema.");
@@ -599,7 +615,8 @@ namespace InventoryAPI.Services
             userDb.MustChangePassword = true;
             await _workFlow.CompleteAsync();
 
-            _ = EnviarCorreoBienvenidaAsync(userDb, nuevaClavePlana, perfilConfigurado.SmtpEmail!, perfilConfigurado.SmtpPassword!);
+            string smtpPassword = secretProtector.Unprotect(perfilConfigurado.SmtpPassword!);
+            _ = EnviarCorreoBienvenidaAsync(userDb, nuevaClavePlana, perfilConfigurado.SmtpEmail!, smtpPassword);
 
             return (true, "Nuevas credenciales generadas y enviadas con éxito.");
         }

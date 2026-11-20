@@ -63,9 +63,10 @@ namespace InventoryAPI.Controllers
         public async Task<IActionResult> DeleteCustomer(int id)
         {
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
-            if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
+            var companyId = ObtenerEmpresaSegura();
+            if (companyId <= 0) return Unauthorized();
 
-            return FromServiceResult(await customerService.DeleteCustomerAsync(id, companyId, userId.ToString()));
+            return FromServiceResult(await customerService.DeleteCustomerAsync(id, companyId));
         }
 
         [HttpGet("dni/{dni}")]

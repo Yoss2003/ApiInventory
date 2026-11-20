@@ -12,7 +12,8 @@ public sealed class CustomerIsolationTests
 {
     private sealed class FakeTokenProvider : IDecolectaTokenProvider
     {
-        public Task<string> GetTokenAsync(bool preferExchangeKey = false) => Task.FromResult(string.Empty);
+        public Task<string> GetDocumentTokenAsync() => Task.FromResult(string.Empty);
+        public Task<string> GetExchangeTokenAsync() => Task.FromResult(string.Empty);
     }
 
     private static AppDbContext CreateContext()
@@ -44,12 +45,11 @@ public sealed class CustomerIsolationTests
 
         var foreignUpdate = await service.UpdateCustomerAsync(created.Id, new CustomerWriteDto
         {
-            Id = created.Id,
             Name = "Modificado"
         }, companyId: 2);
         Assert.Equal(ServiceStatus.NotFound, foreignUpdate.Status);
 
-        var foreignDelete = await service.DeleteCustomerAsync(created.Id, companyId: 2, deletedBy: "99");
+        var foreignDelete = await service.DeleteCustomerAsync(created.Id, companyId: 2);
         Assert.Equal(ServiceStatus.NotFound, foreignDelete.Status);
     }
 }

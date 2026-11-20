@@ -23,8 +23,8 @@ public sealed class AesGcmSecretProtector : ISecretProtector
 
     public string Protect(string plaintext)
     {
-        if (string.IsNullOrEmpty(plaintext)) return string.Empty;
-        if (IsProtected(plaintext)) return plaintext;
+        if (string.IsNullOrEmpty(plaintext))
+            return string.Empty;
 
         var plainBytes = Encoding.UTF8.GetBytes(plaintext);
         var nonce = RandomNumberGenerator.GetBytes(NonceSize);
@@ -42,20 +42,63 @@ public sealed class AesGcmSecretProtector : ISecretProtector
         return Prefix + Convert.ToBase64String(payload);
     }
 
+    public string ProtectStoredValue(string? storedValue)
+    {
+        if (string.IsNullOrEmpty(storedValue))
+            return string.Empty;
+
+        if (IsProtected(storedValue) && TryUnprotect(storedValue, out _))
+            return storedValue;
+
+        return Protect(storedValue);
+    }
+
+    public bool TryUnprotect(string? storedValue, out string plaintext)
+    {
+        plaintext = string.Empty;
+        if (string.IsNullOrEmpty(storedValue))
+            return true;
+
+        if (!IsProtected(storedValue))
+        {
+            plaintext = storedValue;
+            return true;
+        }
+
+        try
+        {
+            var payload = Convert.FromBase64String(storedValue[Prefix.Length..]);
+            if (payload.Length < NonceSize + TagSize + 1)
+                return false;
+
+            var nonce = payload.AsSpan(0, NonceSize);
+            var tag = payload.AsSpan(NonceSize, TagSize);
+            var cipherBytes = payload.AsSpan(NonceSize + TagSize);
+            var plainBytes = new byte[cipherBytes.Length];
+
+            using var aes = new AesGcm(_key, TagSize);
+            aes.Decrypt(nonce, cipherBytes, tag, plainBytes);
+
+            plaintext = Encoding.UTF8.GetString(plainBytes);
+            return true;
+        }
+        catch (Exception ex) when (ex is FormatException or CryptographicException)
+        {
+            return false;
+        }
+    }
+
     public string Unprotect(string storedValue)
     {
-        if (string.IsNullOrEmpty(storedValue)) return string.Empty;
-        if (!IsProtected(storedValue)) return storedValue;
+        if (string.IsNullOrEmpty(storedValue))
+            return string.Empty;
 
-        var payload = Convert.FromBase64String(storedValue[Prefix.Length..]);
-        var nonce = payload.AsSpan(0, NonceSize);
-        var tag = payload.AsSpan(NonceSize, TagSize);
-        var cipherBytes = payload.AsSpan(NonceSize + TagSize);
-        var plainBytes = new byte[cipherBytes.Length];
+        if (!IsProtected(storedValue))
+            return storedValue;
 
-        using var aes = new AesGcm(_key, TagSize);
-        aes.Decrypt(nonce, cipherBytes, tag, plainBytes);
+        if (!TryUnprotect(storedValue, out var plaintext))
+            throw new CryptographicException("No se pudo descifrar el valor protegido.");
 
-        return Encoding.UTF8.GetString(plainBytes);
+        return plaintext;
     }
 }

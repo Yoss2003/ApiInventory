@@ -37,6 +37,8 @@ else if (!builder.Environment.IsDevelopment() && encryptionKey.Length < 32)
 {
     throw new InvalidOperationException("Security:EncryptionKey debe tener al menos 32 caracteres en producción.");
 }
+if (!builder.Environment.IsDevelopment() && string.Equals(encryptionKey, jwtKey, StringComparison.Ordinal))
+    throw new InvalidOperationException("Security:EncryptionKey debe ser distinta a Jwt:Key en producción.");
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
@@ -49,8 +51,10 @@ builder.Services.AddHttpClient();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+builder.Services.AddDbContext<AppDbContext>(options => {
+    if (!builder.Environment.IsEnvironment("Testing"))
+        options.UseNpgsql(connectionString);
+});
 
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
@@ -224,48 +228,51 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-using (var scope = app.Services.CreateScope())
+if (!app.Environment.IsEnvironment("Testing"))
 {
-    var services = scope.ServiceProvider;
-    try
+
+    using (var scope = app.Services.CreateScope())
     {
-        var context = services.GetRequiredService<AppDbContext>();
-        context.Database.Migrate();
-
-        if (!context.Companies.Any())
+        var services = scope.ServiceProvider;
+        try
         {
-            var defaultCompany = new Company
+            var context = services.GetRequiredService<AppDbContext>();
+            context.Database.Migrate();
+
+            if (!context.Companies.Any())
             {
-                BusinessName = "Administración Central",
-                Ruc = "00000000000",
-                LogoUrl = "dotnet_bot.png",
-                PrimaryColorHex = "#8A2BE2",
-                IsActive = true,
-                RegistrationDate = DateTime.Now
-            };
+                var defaultCompany = new Company
+                {
+                    BusinessName = "Administración Central",
+                    Ruc = "00000000000",
+                    LogoUrl = "dotnet_bot.png",
+                    PrimaryColorHex = "#8A2BE2",
+                    IsActive = true,
+                    RegistrationDate = DateTime.Now
+                };
 
-            context.Companies.Add(defaultCompany);
-            context.SaveChanges();
+                context.Companies.Add(defaultCompany);
+                context.SaveChanges();
 
-            const int superAdminRoleId = 1;
-            var superAdmins = context.Users
-                .Where(u => u.CompanyId == null && u.RoleId == superAdminRoleId)
-                .ToList();
+                const int superAdminRoleId = 1;
+                var superAdmins = context.Users
+                    .Where(u => u.CompanyId == null && u.RoleId == superAdminRoleId)
+                    .ToList();
 
-            foreach (var admin in superAdmins)
-            {
-                admin.CompanyId = defaultCompany.Id;
+                foreach (var admin in superAdmins)
+                {
+                    admin.CompanyId = defaultCompany.Id;
+                }
+                context.SaveChanges();
             }
-            context.SaveChanges();
-        }
 
-        InventoryProvisioner.EnsureExistingAsync(context).GetAwaiter().GetResult();
+            InventoryProvisioner.EnsureExistingAsync(context).GetAwaiter().GetResult();
 
-        using (var permissionsTx = context.Database.BeginTransaction())
-        {
-            context.Database.ExecuteSqlRaw(
-                @"LOCK TABLE ""Permissions"" IN SHARE ROW EXCLUSIVE MODE;");
-            context.Database.ExecuteSqlRaw("""
+            using (var permissionsTx = context.Database.BeginTransaction())
+            {
+                context.Database.ExecuteSqlRaw(
+                    @"LOCK TABLE ""Permissions"" IN SHARE ROW EXCLUSIVE MODE;");
+                context.Database.ExecuteSqlRaw("""
                 DO $permissions_seed$
                 DECLARE identity_sequence regclass;
                 BEGIN
@@ -282,37 +289,38 @@ using (var scope = app.Services.CreateScope())
                 $permissions_seed$;
                 """);
 
-            var registeredCodes = context.Permissions
-                .Select(x => x.SystemCode)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var initialViewUsersSeed = !registeredCodes.Contains(InventoryPermissionCodes.ViewUsers);
-            foreach (var (code, label) in InventoryPermissionCodes.Definitions)
-            {
-                if (registeredCodes.Add(code))
-                    context.Permissions.Add(new Permission { SystemCode = code, Name = label });
-            }
-            context.SaveChanges();
-
-            if (initialViewUsersSeed && context.Roles.Any(r => r.Id == 2))
-            {
-                var codes = new[] { InventoryPermissionCodes.ViewUsers, InventoryPermissionCodes.ManageUsers };
-                var ids = context.Permissions.Where(p => codes.Contains(p.SystemCode))
-                    .Select(p => p.Id).ToList();
-                var existingIds = context.RolePermissions.Where(p => p.RoleId == 2)
-                    .Select(p => p.PermissionId).ToHashSet();
-                foreach (var id in ids)
-                    if (!existingIds.Contains(id))
-                        context.RolePermissions.Add(new RolePermission { RoleId = 2, PermissionId = id });
+                var registeredCodes = context.Permissions
+                    .Select(x => x.SystemCode)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var initialViewUsersSeed = !registeredCodes.Contains(InventoryPermissionCodes.ViewUsers);
+                foreach (var (code, label) in InventoryPermissionCodes.Definitions)
+                {
+                    if (registeredCodes.Add(code))
+                        context.Permissions.Add(new Permission { SystemCode = code, Name = label });
+                }
                 context.SaveChanges();
+
+                if (initialViewUsersSeed && context.Roles.Any(r => r.Id == 2))
+                {
+                    var codes = new[] { InventoryPermissionCodes.ViewUsers, InventoryPermissionCodes.ManageUsers };
+                    var ids = context.Permissions.Where(p => codes.Contains(p.SystemCode))
+                        .Select(p => p.Id).ToList();
+                    var existingIds = context.RolePermissions.Where(p => p.RoleId == 2)
+                        .Select(p => p.PermissionId).ToHashSet();
+                    foreach (var id in ids)
+                        if (!existingIds.Contains(id))
+                            context.RolePermissions.Add(new RolePermission { RoleId = 2, PermissionId = id });
+                    context.SaveChanges();
+                }
+                permissionsTx.Commit();
             }
-            permissionsTx.Commit();
         }
-    }
-    catch (Exception ex)
-    {
-        var logger = services.GetRequiredService<ILogger<Program>>();
-        logger.LogError(ex, "Ocurrió un error al aplicar las migraciones o preparar los inventarios.");
-        throw;
+        catch (Exception ex)
+        {
+            var logger = services.GetRequiredService<ILogger<Program>>();
+            logger.LogError(ex, "Ocurrió un error al aplicar las migraciones o preparar los inventarios.");
+            throw;
+        }
     }
 }
 
@@ -324,4 +332,34 @@ if (args.Contains("--migrate-private-media", StringComparer.OrdinalIgnoreCase))
     return;
 }
 
+if (args.Contains("--migrate-smtp-secrets", StringComparer.OrdinalIgnoreCase))
+{
+    using var migrateScope = app.Services.CreateScope();
+    var db = migrateScope.ServiceProvider.GetRequiredService<AppDbContext>();
+    var protector = migrateScope.ServiceProvider.GetRequiredService<ISecretProtector>();
+    var logger = migrateScope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    var profiles = await db.Profiles
+        .Where(p => p.SmtpPassword != null && p.SmtpPassword != "")
+        .ToListAsync();
+
+    int migrated = 0;
+    foreach (var profile in profiles)
+    {
+        var updated = protector.ProtectStoredValue(profile.SmtpPassword);
+        if (!string.Equals(updated, profile.SmtpPassword, StringComparison.Ordinal))
+        {
+            profile.SmtpPassword = updated;
+            migrated++;
+        }
+    }
+
+    if (migrated > 0)
+        await db.SaveChangesAsync();
+
+    logger.LogInformation("Migración SMTP completada. Perfiles cifrados: {Migrated}.", migrated);
+    return;
+}
+
 app.Run();
+public partial class Program { }

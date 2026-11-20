@@ -16,8 +16,6 @@ public sealed record CustomerReadDto(
 
 public sealed class CustomerWriteDto
 {
-    public int Id { get; set; }
-
     [StringLength(50)]
     public string? DocumentNumber { get; set; }
 

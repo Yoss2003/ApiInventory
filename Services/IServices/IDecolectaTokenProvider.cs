@@ -2,5 +2,6 @@
 
 public interface IDecolectaTokenProvider
 {
-    Task<string> GetTokenAsync(bool preferExchangeKey = false);
+    Task<string> GetDocumentTokenAsync();
+    Task<string> GetExchangeTokenAsync();
 }

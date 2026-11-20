@@ -1,4 +1,5 @@
 ﻿using InventoryAPI.Models;
+using InventoryAPI.Models.DTO;
 using InventoryAPI.Security;
 using InventoryAPI.Services;
 using InventoryAPI.Services.IServices;
@@ -39,23 +40,62 @@ namespace InventoryAPI.Controllers
         }
 
         [HttpPut("{id:int}")]
-        public async Task<IActionResult> PutSupplier(int id, [FromBody] Supplier supplier)
+        public async Task<IActionResult> PutSupplier(int id, [FromBody] SupplierWriteDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
             var companyId = ObtenerEmpresaSegura();
             if (companyId <= 0) return Unauthorized();
 
+            var supplier = new Supplier
+            {
+                Id = id,
+                InventoryId = dto.InventoryId,
+                Ruc = dto.Ruc,
+                BusinessName = dto.BusinessName,
+                ContactName = dto.ContactName,
+                Phone = dto.Phone,
+                Email = dto.Email,
+                Address = dto.Address,
+                Estado = dto.Estado,
+                Condicion = dto.Condicion,
+                Distrito = dto.Distrito,
+                Provincia = dto.Provincia,
+                Departamento = dto.Departamento,
+                StatusId = dto.StatusId,
+                RelationshipDescription = dto.RelationshipDescription,
+                FiscalDataJson = dto.FiscalDataJson
+            };
+
             var result = await supplierService.UpdateSupplierAsync(id, supplier, companyId);
             return FromServiceResult(result);
         }
 
         [HttpPost]
-        public async Task<IActionResult> PostSupplier([FromBody] Supplier supplier)
+        public async Task<IActionResult> PostSupplier([FromBody] SupplierWriteDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageMaster)) return Forbid();
             if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
+
+            var supplier = new Supplier
+            {
+                InventoryId = dto.InventoryId,
+                Ruc = dto.Ruc,
+                BusinessName = dto.BusinessName,
+                ContactName = dto.ContactName,
+                Phone = dto.Phone,
+                Email = dto.Email,
+                Address = dto.Address,
+                Estado = dto.Estado,
+                Condicion = dto.Condicion,
+                Distrito = dto.Distrito,
+                Provincia = dto.Provincia,
+                Departamento = dto.Departamento,
+                StatusId = dto.StatusId,
+                RelationshipDescription = dto.RelationshipDescription,
+                FiscalDataJson = dto.FiscalDataJson
+            };
 
             var result = await supplierService.CreateSupplierAsync(supplier, companyId, userId, EsDesarrollador);
             if (result.Status == ServiceStatus.Created && result.Payload is Supplier created)

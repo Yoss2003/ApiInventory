@@ -6,23 +6,49 @@ namespace InventoryAPI.Services;
 
 public sealed class DecolectaTokenProvider(IConfiguration configuration, AppDbContext db) : IDecolectaTokenProvider
 {
-    public async Task<string> GetTokenAsync(bool preferExchangeKey = false)
+    private static string? CleanToken(string? raw)
     {
-        if (preferExchangeKey)
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var trimmed = raw.Trim();
+        if (trimmed.StartsWith("AQUI_VA_", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("TU_", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("CHANGE_ME", StringComparison.OrdinalIgnoreCase))
         {
-            var exchangeToken = configuration["DecolectaApi:ExchangeToken"]?.Trim();
-            if (!string.IsNullOrWhiteSpace(exchangeToken)) return exchangeToken;
+            return null;
         }
+        return trimmed;
+    }
 
-        var envToken = configuration["Decolecta:Token"]?.Trim();
-        if (!string.IsNullOrWhiteSpace(envToken)) return envToken;
+    public async Task<string> GetDocumentTokenAsync()
+    {
+        var token = CleanToken(configuration["Decolecta:Token"])
+                 ?? CleanToken(configuration["DecolectaApi:ReniecToken"]);
 
+        if (!string.IsNullOrWhiteSpace(token))
+            return token;
+
+        return await ResolveDatabaseTokenAsync();
+    }
+
+    public async Task<string> GetExchangeTokenAsync()
+    {
+        var token = CleanToken(configuration["DecolectaApi:ExchangeToken"])
+                 ?? CleanToken(configuration["Decolecta:Token"]);
+
+        if (!string.IsNullOrWhiteSpace(token))
+            return token;
+
+        return await ResolveDatabaseTokenAsync();
+    }
+
+    private async Task<string> ResolveDatabaseTokenAsync()
+    {
         var dbToken = await db.Parameters.AsNoTracking()
             .Where(p => p.CompanyId == 1 && p.ParameterType == "API_KEY" && p.Name == "Decolecta_Token")
             .OrderBy(p => p.InventoryId == 0 ? 0 : 1)
             .Select(p => p.Description)
             .FirstOrDefaultAsync();
 
-        return dbToken?.Trim() ?? string.Empty;
+        return CleanToken(dbToken) ?? string.Empty;
     }
 }

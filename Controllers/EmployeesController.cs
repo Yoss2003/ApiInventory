@@ -71,9 +71,10 @@ namespace InventoryAPI.Controllers
         public async Task<IActionResult> DeleteEmployee(int id)
         {
             if (!await access.HasAsync(User, InventoryPermissionCodes.ManageUsers)) return Forbid();
-            if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
+            var companyId = ObtenerEmpresaSegura();
+            if (companyId <= 0) return Unauthorized();
 
-            return FromServiceResult(await employeeService.DeleteInCompanyAsync(id, companyId, userId.ToString()));
+            return FromServiceResult(await employeeService.DeleteInCompanyAsync(id, companyId));
         }
     }
 }

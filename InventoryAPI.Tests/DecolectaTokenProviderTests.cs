@@ -17,7 +17,7 @@ public sealed class DecolectaTokenProviderTests
     }
 
     [Fact]
-    public async Task GetTokenAsync_PrefersEnvironmentConfig_OverDatabaseFallback()
+    public async Task ResolvesDocumentAndExchangeTokens_IgnoringPlaceholders()
     {
         await using var db = CreateContext();
         db.Parameters.Add(new Parameters
@@ -27,26 +27,26 @@ public sealed class DecolectaTokenProviderTests
             InventoryId = 0,
             ParameterType = "API_KEY",
             Name = "Decolecta_Token",
-            Description = "db-token"
+            Description = "db-fallback-token"
         });
         await db.SaveChangesAsync();
 
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Decolecta:Token"] = "env-token",
-                ["DecolectaApi:ExchangeToken"] = "exchange-token"
+                ["DecolectaApi:ReniecToken"] = "AQUI_VA_EL_TOKEN_DE_RENIEC",
+                ["DecolectaApi:ExchangeToken"] = "AQUI_VA_EL_TOKEN_DE_EXCHANGE"
             })
             .Build();
 
         var provider = new DecolectaTokenProvider(config, db);
 
-        Assert.Equal("env-token", await provider.GetTokenAsync());
-        Assert.Equal("exchange-token", await provider.GetTokenAsync(preferExchangeKey: true));
+        Assert.Equal("db-fallback-token", await provider.GetDocumentTokenAsync());
+        Assert.Equal("db-fallback-token", await provider.GetExchangeTokenAsync());
     }
 
     [Fact]
-    public async Task GetTokenAsync_FallsBackToDatabase_WhenConfigIsEmpty()
+    public async Task PrefersSpecificTokens_OverDatabaseFallback()
     {
         await using var db = CreateContext();
         db.Parameters.Add(new Parameters
@@ -60,9 +60,17 @@ public sealed class DecolectaTokenProviderTests
         });
         await db.SaveChangesAsync();
 
-        var config = new ConfigurationBuilder().Build();
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Decolecta:Token"] = "doc-token",
+                ["DecolectaApi:ExchangeToken"] = "fx-token"
+            })
+            .Build();
+
         var provider = new DecolectaTokenProvider(config, db);
 
-        Assert.Equal("db-fallback-token", await provider.GetTokenAsync());
+        Assert.Equal("doc-token", await provider.GetDocumentTokenAsync());
+        Assert.Equal("fx-token", await provider.GetExchangeTokenAsync());
     }
 }

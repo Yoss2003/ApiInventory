@@ -41,8 +41,20 @@ public sealed class UserCredentialMailer(
             p.SmtpEmail != null && p.SmtpPassword != null &&
             p.SmtpEmail != "" && p.SmtpPassword != "")
             .OrderByDescending(p => p.CompanyId == companyId).FirstOrDefaultAsync();
-        return profile is null ? null : new SmtpConfig("smtp.gmail.com", 587,
-            profile.SmtpEmail!, profile.SmtpEmail!, secretProtector.Unprotect(profile.SmtpPassword!));
+
+        if (profile is null)
+            return null;
+
+        if (!secretProtector.TryUnprotect(profile.SmtpPassword, out var smtpPassword))
+        {
+            logger.LogWarning(
+                "No se pudo descifrar SmtpPassword del perfil {ProfileId} en empresa {CompanyId}.",
+                profile.Id, profile.CompanyId);
+            return null;
+        }
+
+        return new SmtpConfig("smtp.gmail.com", 587,
+            profile.SmtpEmail!, profile.SmtpEmail!, smtpPassword);
     }
 
     public async Task<(bool Sent, string Message)> SendAsync(

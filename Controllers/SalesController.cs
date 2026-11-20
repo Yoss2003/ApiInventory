@@ -1,4 +1,5 @@
 using InventoryAPI.Models;
+using InventoryAPI.Models.DTO;
 using InventoryAPI.Services.IServices;
 using Microsoft.AspNetCore.Mvc;
 
@@ -14,10 +15,32 @@ public sealed class SalesController(ISaleService saleService) : BaseApiControlle
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateSale([FromBody] Sale sale)
+    public async Task<IActionResult> CreateSale([FromBody] SaleCreateDto dto)
     {
         if (!ModelState.IsValid) return BadRequest(ModelState);
         if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
+
+        var sale = new Sale
+        {
+            SaleDate = dto.SaleDate ?? DateTime.UtcNow,
+            PaymentType = dto.PaymentType,
+            SalesModeId = dto.SalesModeId,
+            CustomerName = dto.CustomerName?.Trim(),
+            TotalAmount = dto.TotalAmount,
+            Notes = dto.Notes?.Trim(),
+            AmountReceived = dto.AmountReceived,
+            ChangeGiven = dto.ChangeGiven,
+            PaymentGroup = dto.PaymentGroup,
+            DigitalWallet = dto.DigitalWallet,
+            InstallmentPlan = dto.InstallmentPlan,
+            SaleDetails = [.. dto.SaleDetails.Select(d => new SaleDetail
+            {
+                ArticleId = d.ArticleId,
+                Quantity = d.Quantity,
+                UnitPrice = d.UnitPrice
+            })]
+        };
+
         return FromServiceResult(await saleService.CreateAuthorizedSaleAsync(sale, companyId, userId, EsDesarrollador));
     }
 

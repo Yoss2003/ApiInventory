@@ -1,7 +1,6 @@
-﻿namespace InventoryAPI.Services.IServices
+﻿namespace InventoryAPI.Services.IServices;
+
+public interface IFcmNotificationService
 {
-    public interface IFcmNotificationService
-    {
-        Task<bool> SendPushNotificationAsync(string fcmToken, string title, string body, Dictionary<string, string>? dataPayload = null);
-    }
+    Task<bool> SendPushNotificationAsync(string firebaseInstallationId, string title, string body, Dictionary<string, string>? dataPayload = null);
 }

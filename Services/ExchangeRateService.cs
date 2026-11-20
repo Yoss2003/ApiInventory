@@ -19,7 +19,7 @@ public sealed class ExchangeRateService(IWorkFlow workFlow, HttpClient httpClien
             .FirstOrDefault();
         if (cache != null) return cache;
 
-        var token = await decolectaTokens.GetTokenAsync(preferExchangeKey: true);
+        var token = await decolectaTokens.GetExchangeTokenAsync();
         if (!string.IsNullOrWhiteSpace(token))
         {
             try

@@ -57,7 +57,6 @@ public sealed class EmployeeIsolationTests
         var service = new EmployeeService(new WorkFlow(db));
         var tampered = new EmployeeWriteDto
         {
-            Id = 20,
             FirstName = "Hackeado",
             LastName = "Externo",
             DNI = "00000000"
@@ -89,7 +88,7 @@ public sealed class EmployeeIsolationTests
 
         var service = new EmployeeService(new WorkFlow(db));
 
-        var result = await service.DeleteInCompanyAsync(30, companyId: 2, deletedBy: "99");
+        var result = await service.DeleteInCompanyAsync(30, companyId: 2);
 
         Assert.Equal(ServiceStatus.NotFound, result.Status);
 

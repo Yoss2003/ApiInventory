@@ -71,8 +71,6 @@ namespace InventoryAPI.Services
 
         public async Task<ServiceResult> UpdateCustomerAsync(int id, CustomerWriteDto dto, int companyId)
         {
-            if (id != dto.Id) return ServiceResult.BadRequest("El ID no coincide.");
-
             var existing = await _workFlow.Repository<Customer>()
                 .Query(asNoTracking: false)
                 .FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == companyId && c.IsActive);
@@ -91,7 +89,7 @@ namespace InventoryAPI.Services
             return ServiceResult.NoContent();
         }
 
-        public async Task<ServiceResult> DeleteCustomerAsync(int id, int companyId, string deletedBy)
+        public async Task<ServiceResult> DeleteCustomerAsync(int id, int companyId)
         {
             var existing = await _workFlow.Repository<Customer>()
                 .Query(asNoTracking: false)
@@ -112,7 +110,7 @@ namespace InventoryAPI.Services
 
             // La misma prioridad y el mismo ámbito de administración central
             // que se utilizan en SupplierService para consultar RUC.
-            var token = await decolectaTokens.GetTokenAsync();
+            var token = await decolectaTokens.GetDocumentTokenAsync();
             if (string.IsNullOrWhiteSpace(token))
                 return (false, "El servicio de DNI no está configurado. Configura el token maestro de Decolecta.");
 

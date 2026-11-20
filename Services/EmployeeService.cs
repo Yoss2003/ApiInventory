@@ -43,7 +43,7 @@ namespace InventoryAPI.Services
             var emp = await _workFlow.Repository<Employee>()
                 .Query(asNoTracking: true)
                 .Include(e => e.User)
-                .FirstOrDefaultAsync(e => e.Id == id && e.CompanyId == companyId);
+                .FirstOrDefaultAsync(e => e.Id == id && e.CompanyId == companyId && e.IsActive);
 
             return emp is null ? null : ToReadDto(emp);
         }
@@ -84,8 +84,6 @@ namespace InventoryAPI.Services
 
         public async Task<ServiceResult> UpdateInCompanyAsync(int id, EmployeeWriteDto dto, int companyId)
         {
-            if (id != dto.Id) return ServiceResult.BadRequest("El ID no coincide.");
-
             var existingEmployee = await _workFlow.Repository<Employee>()
                 .Query(asNoTracking: false)
                 .FirstOrDefaultAsync(e => e.Id == id && e.CompanyId == companyId);
@@ -143,7 +141,7 @@ namespace InventoryAPI.Services
             return ServiceResult.Ok(new { mensaje = "Empleado y usuario actualizados correctamente." });
         }
 
-        public async Task<ServiceResult> DeleteInCompanyAsync(int id, int companyId, string deletedBy)
+        public async Task<ServiceResult> DeleteInCompanyAsync(int id, int companyId)
         {
             var existingEmployee = await _workFlow.Repository<Employee>()
                 .Query(asNoTracking: false)

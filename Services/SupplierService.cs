@@ -17,7 +17,8 @@ namespace InventoryAPI.Services
         HttpClient httpClient,
         AppDbContext db,
         IDecolectaTokenProvider decolectaTokens,
-        IInventoryScopeService inventoryScope) : WorkContainer<Supplier>(workFlow), ISupplierService
+        IInventoryScopeService inventoryScope,
+        ILogger<SupplierService> logger) : WorkContainer<Supplier>(workFlow), ISupplierService
     {
         private static readonly HashSet<string> AllowedFiscalKeys = new(StringComparer.Ordinal)
         {
@@ -204,17 +205,7 @@ namespace InventoryAPI.Services
 
             try
             {
-                var apiToken = await decolectaTokens.GetTokenAsync();
-                if (string.IsNullOrWhiteSpace(apiToken))
-                {
-                    apiToken = await db.Parameters.AsNoTracking()
-                        .Where(p => p.CompanyId == 1 && p.ParameterType == "API_KEY" &&
-                            p.Name == "Decolecta_Token")
-                        .OrderBy(p => p.InventoryId == 0 ? 0 : 1)
-                        .Select(p => p.Description)
-                        .FirstOrDefaultAsync() ?? "";
-                }
-
+                var apiToken = await decolectaTokens.GetDocumentTokenAsync();
                 if (string.IsNullOrWhiteSpace(apiToken))
                 {
                     return (false, null, "El servicio de SUNAT está inactivo. El administrador debe configurar el Token desde la App.");
@@ -339,7 +330,8 @@ namespace InventoryAPI.Services
             }
             catch (Exception ex)
             {
-                return (false, null, $"Falla en el servidor interno: {ex.Message}");
+                logger.LogError(ex, "Error interno al consultar RUC en Decolecta.");
+                return (false, null, "Ocurrió un error interno al consultar el RUC. Intenta nuevamente.");
             }
         }
     }

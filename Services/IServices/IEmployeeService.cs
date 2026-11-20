@@ -11,7 +11,7 @@ namespace InventoryAPI.Services.IServices
         Task<ServiceResult> CreateInCompanyAsync(EmployeeWriteDto dto, int companyId);
         Task<ServiceResult> UpdateInCompanyAsync(int id, EmployeeWriteDto dto, int companyId);
         Task<ServiceResult> UpdateEmployeeWithUserInCompanyAsync(int id, EmployeeUpdateDTO dto, int companyId);
-        Task<ServiceResult> DeleteInCompanyAsync(int id, int companyId, string deletedBy);
+        Task<ServiceResult> DeleteInCompanyAsync(int id, int companyId);
         Task<(bool Success, string Message)> UpdateEmployeeWithUserAsync(int id, EmployeeUpdateDTO dto);
     }
 }
