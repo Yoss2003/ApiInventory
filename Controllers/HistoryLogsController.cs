@@ -30,7 +30,7 @@ public sealed class HistoryLogsController(IHistoryLogService historyLogService) 
         if (!ModelState.IsValid) return BadRequest(ModelState);
         if (!TryObtenerAmbito(out var companyId, out var userId)) return Unauthorized();
 
-        var success = await historyLogService.CreateInCompanyAsync(historyLog, companyId, userId);
+        var success = await historyLogService.CreateInCompanyAsync(historyLog, companyId, userId, EsDesarrollador);
         if (!success) return BadRequest(new { error = "No se pudo registrar el evento de historial." });
 
         return CreatedAtAction(nameof(GetHistoryLog), new { id = historyLog.Id }, historyLog);
