@@ -10,7 +10,7 @@ namespace InventoryAPI.Services.IServices
         Task<UserDTO?> GetUserDtoByIdAsync(int id);
         Task<IEnumerable<UserDTO>> GetUsersDtoByCompanyAsync(int companyId);
         Task<(bool Success, string Message)> UpdateUserAsync(int id, User userActualizado);
-        Task<(bool Success, object Data, string Message)> CreateUserAsync(User user, string contentRootPath);
+        Task<(bool Success, object Data, string Message)> CreateUserAsync(User user, int companyId, string contentRootPath);
         Task<(bool Success, User? User, string Message, bool Requires2FA, bool RequirePasswordChange, bool AccountPending)> LoginAsync(LoginRequestDTO request);
         Task<(bool Success, User? User, string Message)> ChangeInitialPasswordAsync(int userId, string newPassword);
         Task<(bool Success, string Url, string Message)> UpdatePhotoAsync(int id, string base64Image, string contentRootPath);
