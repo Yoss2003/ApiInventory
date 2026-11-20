@@ -1,27 +1,26 @@
-﻿using Microsoft.AspNetCore.Mvc;
 using InventoryAPI.Services.IServices;
+using Microsoft.AspNetCore.Mvc;
 
-namespace InventoryAPI.Controllers
+namespace InventoryAPI.Controllers;
+
+public sealed class NotificationsController(INotificationService notificationService) : BaseApiController
 {
-    public class NotificationsController(INotificationService notificationService) : BaseApiController
+    [HttpGet]
+    public async Task<IActionResult> GetNotifications()
     {
-        private readonly INotificationService _notificationService = notificationService;
+        var companyId = ObtenerEmpresaSegura();
+        if (companyId <= 0) return Unauthorized();
 
-        [HttpGet]
-        public async Task<IActionResult> GetNotifications()
-        {
-            int companyId = ObtenerEmpresaSegura();
-            var notifications = await _notificationService.GetAllByCompanyIdAsync(companyId);
-            return Ok(notifications);
-        }
+        return Ok(await notificationService.GetAllByCompanyIdAsync(companyId));
+    }
 
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetNotification(int id)
-        {
-            var notification = await _notificationService.GetByIdAsync(id);
-            if (notification == null) return NotFound();
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetNotification(int id)
+    {
+        var companyId = ObtenerEmpresaSegura();
+        if (companyId <= 0) return Unauthorized();
 
-            return Ok(notification);
-        }
+        var notification = await notificationService.GetByIdInCompanyAsync(id, companyId);
+        return notification is null ? NotFound() : Ok(notification);
     }
 }
