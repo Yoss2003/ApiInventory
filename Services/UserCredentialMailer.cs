@@ -23,10 +23,13 @@ public sealed class UserCredentialMailer(
     private sealed record SmtpConfig(string Host, int Port, string Sender, string Username, string Password);
 
     public async Task<bool> IsConfiguredAsync(int companyId)
-        => await ConfigurationAsync(companyId) is not null;
+        => companyId > 0 && await ConfigurationAsync(companyId) is not null;
 
     private async Task<SmtpConfig?> ConfigurationAsync(int companyId)
     {
+        if (companyId <= 0) return null;
+
+        // La configuración de entorno es una configuración global explícita del sistema.
         var host = config["PasswordRecovery:SmtpHost"];
         var sender = config["PasswordRecovery:SenderEmail"];
         var username = config["PasswordRecovery:SmtpUser"];
@@ -36,11 +39,13 @@ public sealed class UserCredentialMailer(
             return new SmtpConfig(host, int.TryParse(config["PasswordRecovery:SmtpPort"], out var port) ? port : 587,
                 sender, username, password);
 
+        // Las credenciales almacenadas en perfiles pertenecen exclusivamente a su empresa.
+        // No se permite usar el SMTP de la empresa central como fallback de otro tenant.
         var profile = await db.Profiles.AsNoTracking().Where(p =>
-            (p.CompanyId == companyId || p.CompanyId == 1) &&
+            p.CompanyId == companyId &&
             p.SmtpEmail != null && p.SmtpPassword != null &&
             p.SmtpEmail != "" && p.SmtpPassword != "")
-            .OrderByDescending(p => p.CompanyId == companyId).FirstOrDefaultAsync();
+            .FirstOrDefaultAsync();
 
         if (profile is null)
             return null;
@@ -62,7 +67,7 @@ public sealed class UserCredentialMailer(
         string password)
     {
         var smtpConfig = await ConfigurationAsync(companyId);
-        if (smtpConfig is null) return (false, "SMTP no está configurado; configura el remitente antes de registrar personal.");
+        if (smtpConfig is null) return (false, "SMTP no está configurado para esta empresa; configura el remitente antes de registrar personal.");
         if (string.IsNullOrWhiteSpace(recipientEmail)) return (false, "El usuario debe tener un correo válido.");
 
         var safeName = WebUtility.HtmlEncode(firstName);
@@ -105,8 +110,6 @@ public sealed class UserCredentialMailer(
         }
         catch (Exception ex)
         {
-            // La causa detallada solo se registra en el servidor. Nunca enviar
-            // nombres de usuario SMTP, contraseñas ni respuestas sin filtrar.
             logger.LogWarning(ex,
                 "Fallo al enviar credenciales por SMTP en empresa {CompanyId} (tipo {ErrorType})",
                 companyId, ex.GetType().Name);
@@ -143,6 +146,5 @@ public sealed class UserCredentialMailer(
             return "No se pudo establecer una conexión segura con SMTP. Revisa host, puerto y red." + retry;
 
         return "No se confirmó el envío del correo por SMTP. Revisa los registros de la API." + retry;
-
     }
 }

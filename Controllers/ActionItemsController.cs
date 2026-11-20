@@ -1,84 +1,59 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using InventoryAPI.Services.IServices;
 using InventoryAPI.Models;
+using InventoryAPI.Services.IServices;
+using Microsoft.AspNetCore.Mvc;
 
-namespace InventoryAPI.Controllers
+namespace InventoryAPI.Controllers;
+
+public sealed class ActionItemsController(IActionItemService actionItemService) : BaseApiController
 {
-    public class ActionItemsController(IActionItemService actionItemService) : BaseApiController
+    [HttpGet]
+    public async Task<IActionResult> GetActions() =>
+        Ok(await actionItemService.GetAllAsync());
+
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetActionItem(int id)
     {
-        private readonly IActionItemService _actionItemService = actionItemService;
+        var actionItem = await actionItemService.GetByIdAsync(id);
+        return actionItem is null ? NotFound() : Ok(actionItem);
+    }
 
-        [HttpGet]
-        public async Task<IActionResult> GetActions()
-        {
-            try
-            {
-                var actionItems = await _actionItemService.GetAllAsync();
-                return Ok(actionItems);
-            }
-            catch (Exception ex) { return StatusCode(500, $"Error interno del servidor: {ex.Message}"); }
-        }
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> PutActionItem(int id, [FromBody] ActionItem actionItem)
+    {
+        if (!EsDesarrollador) return Forbid();
+        if (id != actionItem.Id) return BadRequest(new { error = "El ID no coincide." });
+        if (!ModelState.IsValid) return BadRequest(ModelState);
 
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetActionItem(int id)
-        {
-            try
-            {
-                var actionItem = await _actionItemService.GetByIdAsync(id);
-                if (actionItem == null) return NotFound();
-                return Ok(actionItem);
-            }
-            catch (Exception ex) { return StatusCode(500, $"Error interno del servidor: {ex.Message}"); }
-        }
+        var existing = await actionItemService.GetByIdAsync(id);
+        if (existing is null) return NotFound();
 
-        [HttpPut("{id}")]
-        public async Task<IActionResult> PutActionItem(int id, [FromBody] ActionItem actionItem)
-        {
-            if (id != actionItem.Id) return BadRequest();
-            if (!ModelState.IsValid) return BadRequest(ModelState);
+        actionItem.Name = actionItem.Name.Trim();
+        var updated = await actionItemService.UpdateAsync(actionItem);
+        return updated ? NoContent() : BadRequest(new { error = "No se pudo actualizar el catálogo de acciones." });
+    }
 
-            try
-            {
-                var existingActionItem = await _actionItemService.GetByIdAsync(id);
-                if (existingActionItem == null) return NotFound();
+    [HttpPost]
+    public async Task<IActionResult> PostActionItem([FromBody] ActionItem actionItem)
+    {
+        if (!EsDesarrollador) return Forbid();
+        if (!ModelState.IsValid) return BadRequest(ModelState);
 
-                var success = await _actionItemService.UpdateAsync(actionItem);
-                if (!success) return BadRequest("No se pudo actualizar el Action Item.");
+        actionItem.Id = 0;
+        actionItem.Name = actionItem.Name.Trim();
+        var created = await actionItemService.CreateAsync(actionItem);
+        if (!created) return BadRequest(new { error = "No se pudo crear el catálogo de acciones." });
 
-                return NoContent();
-            }
-            catch (Exception ex) { return StatusCode(500, $"Error interno del servidor: {ex.Message}"); }
-        }
+        return CreatedAtAction(nameof(GetActionItem), new { id = actionItem.Id }, actionItem);
+    }
 
-        [HttpPost]
-        public async Task<IActionResult> PostActionItem([FromBody] ActionItem actionItem)
-        {
-            if (!ModelState.IsValid) return BadRequest(ModelState);
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteActionItem(int id)
+    {
+        if (!EsDesarrollador) return Forbid();
+        var existing = await actionItemService.GetByIdAsync(id);
+        if (existing is null) return NotFound();
 
-            try
-            {
-                var success = await _actionItemService.CreateAsync(actionItem);
-                if (!success) return BadRequest("No se pudo crear el Action Item.");
-
-                return CreatedAtAction(nameof(GetActionItem), new { id = actionItem.Id }, actionItem);
-            }
-            catch (Exception ex) { return StatusCode(500, $"Error interno del servidor: {ex.Message}"); }
-        }
-
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> DeleteActionItem(int id)
-        {
-            try
-            {
-                var existingActionItem = await _actionItemService.GetByIdAsync(id);
-                if (existingActionItem == null) return NotFound();
-
-                var success = await _actionItemService.DeleteAsync(id);
-                if (!success) return BadRequest("No se pudo eliminar el Action Item.");
-
-                return NoContent();
-            }
-            catch (Exception ex) { return StatusCode(500, $"Error interno del servidor: {ex.Message}"); }
-        }
+        var deleted = await actionItemService.DeleteAsync(id, ObtenerUsuarioSeguro().ToString());
+        return deleted ? NoContent() : BadRequest(new { error = "No se pudo eliminar el catálogo de acciones." });
     }
 }

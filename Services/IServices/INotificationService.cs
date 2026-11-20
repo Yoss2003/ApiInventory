@@ -1,9 +1,9 @@
-﻿using InventoryAPI.Models;
+using InventoryAPI.Models;
 using InventoryAPI.Repositories.IRepositories;
 
-namespace InventoryAPI.Services.IServices
+namespace InventoryAPI.Services.IServices;
+
+public interface INotificationService : IWorkContainer<Notification>
 {
-    public interface INotificationService : IWorkContainer<Notification>
-    {
-    }
+    Task<Notification?> GetByIdInCompanyAsync(int id, int companyId);
 }
