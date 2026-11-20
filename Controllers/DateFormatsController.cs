@@ -1,39 +1,18 @@
-﻿using InventoryAPI.Services.IServices;
+using InventoryAPI.Services.IServices;
 using Microsoft.AspNetCore.Mvc;
 
-namespace InventoryAPI.Controllers
+namespace InventoryAPI.Controllers;
+
+public sealed class DateFormatsController(IDateFormatService dateFormatService) : BaseApiController
 {
-    public class DateFormatsController(IDateFormatService dateFormatService) : BaseApiController
+    [HttpGet]
+    public async Task<IActionResult> GetDateFormats() =>
+        Ok(await dateFormatService.GetAllAsync());
+
+    [HttpGet("{id:int}")]
+    public async Task<IActionResult> GetDateFormat(int id)
     {
-        private readonly IDateFormatService _dateFormatService = dateFormatService;
-
-        [HttpGet]
-        public async Task<IActionResult> GetDateFormats()
-        {
-            try
-            {
-                var formats = await _dateFormatService.GetAllAsync();
-                return Ok(formats);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error: {ex.Message}");
-            }
-        }
-
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetDateFormat(int id)
-        {
-            try
-            {
-                var format = await _dateFormatService.GetByIdAsync(id);
-                if (format == null) return NotFound();
-                return Ok(format);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error: {ex.Message}");
-            }
-        }
+        var format = await dateFormatService.GetByIdAsync(id);
+        return format is null ? NotFound() : Ok(format);
     }
 }
