@@ -102,6 +102,15 @@ public sealed class InventoriesController(
         return FromServiceResult(await inventoryService.DeactivateInventoryAsync(id, company, user, IsManager));
     }
 
+    [HttpGet("{inventoryId:int}/share-recipients")]
+    public async Task<IActionResult> GetShareRecipients(int inventoryId)
+    {
+        if (!TryObtenerAmbito(out var company, out var user)) return Unauthorized();
+        if (!await permissions.HasAsync(User, InventoryPermissionCodes.ManageInventoryAccess)) return Forbid();
+
+        return FromServiceResult(await inventoryService.GetShareRecipientsAuthorizedAsync(inventoryId, company, user, IsManager));
+    }
+
     [HttpPost("Share")]
     public async Task<IActionResult> ShareInventory([FromBody] ShareRequestDTO request)
     {
