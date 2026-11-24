@@ -187,6 +187,33 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
         return ServiceResult.NoContent();
     }
 
+    public async Task<ServiceResult> GetShareRecipientsAuthorizedAsync(int inventoryId, int companyId, int userId, bool isManager)
+    {
+        var source = await db.Inventories.AsNoTracking().FirstOrDefaultAsync(i =>
+            i.Id == inventoryId && i.CompanyId == companyId && i.IsActive &&
+            !i.IsMaster && (i.UserId == userId || isManager));
+        if (source is null) return ServiceResult.NotFound();
+
+        var recipients = await (
+            from employee in db.Employees.AsNoTracking()
+            join user in db.Users.AsNoTracking() on employee.UserId equals (int?)user.Id
+            where employee.CompanyId == companyId && employee.IsActive &&
+                  user.CompanyId == companyId && user.IsActive && user.StatusId == 1 &&
+                  user.Id != source.UserId && user.Id != userId
+            orderby employee.FirstName, employee.LastName, user.Username
+            select new InventoryShareRecipientDto(
+                user.Id,
+                user.Username ?? string.Empty,
+                user.Email,
+                employee.FirstName,
+                employee.LastName,
+                employee.DNI,
+                user.ProfilePictureUrl)
+        ).ToListAsync();
+
+        return ServiceResult.Ok(recipients);
+    }
+
     public async Task<ServiceResult> ShareInventoryAuthorizedAsync(ShareRequestDTO request, int companyId, int userId, bool isManager)
     {
         var canShare = await db.Inventories.AnyAsync(i =>
@@ -250,7 +277,9 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
 
     public async Task<(bool Success, string Message)> ShareInventoryAsync(ShareRequestDTO request)
     {
-        if (request.InventoryId <= 0 || string.IsNullOrWhiteSpace(request.GuestIdentifier) ||
+        if (request.InventoryId <= 0 ||
+            (request.GuestUserId is not > 0 && string.IsNullOrWhiteSpace(request.GuestIdentifier)) ||
+            (request.GuestUserId.HasValue && request.GuestUserId.Value <= 0) ||
             request.AccessLevel is not (SharedInventory.AccessMode.Lector or SharedInventory.AccessMode.Editor))
             return (false, "Selecciona un inventario, destinatario y permiso válidos.");
 
@@ -259,11 +288,22 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
         if (source == null || source.IsMaster)
             return (false, "El inventario no existe, está desactivado o es un maestro no compartible.");
 
-        string identifier = request.GuestIdentifier.Trim();
-        var recipient = await db.Users.AsNoTracking()
-            .FirstOrDefaultAsync(u => u.IsActive && u.CompanyId == source.CompanyId &&
-                (u.Username == identifier || u.Email == identifier ||
-                 (u.Employee != null && u.Employee.DNI == identifier)));
+        User? recipient;
+        if (request.GuestUserId is int guestUserId)
+        {
+            recipient = await db.Users.AsNoTracking().FirstOrDefaultAsync(u =>
+                u.Id == guestUserId && u.IsActive && u.StatusId == 1 &&
+                u.CompanyId == source.CompanyId);
+        }
+        else
+        {
+            string identifier = request.GuestIdentifier.Trim();
+            recipient = await db.Users.AsNoTracking()
+                .FirstOrDefaultAsync(u => u.IsActive && u.StatusId == 1 &&
+                    u.CompanyId == source.CompanyId &&
+                    (u.Username == identifier || u.Email == identifier ||
+                     (u.Employee != null && u.Employee.DNI == identifier)));
+        }
         if (recipient == null) return (false, "Destinatario no encontrado en la misma empresa.");
         if (source.UserId == recipient.Id) return (false, "No puedes compartir tu inventario contigo mismo.");
         if (await db.SharedInventories.AnyAsync(s => s.CompanyId == source.CompanyId &&

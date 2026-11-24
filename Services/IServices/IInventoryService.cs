@@ -15,6 +15,7 @@ namespace InventoryAPI.Services.IServices
         Task<ServiceResult> AssignInventoryAsync(int ownerUserId, string inventoryName, string? alias, int companyId);
         Task<ServiceResult> UpdateInventoryAsync(int id, Inventory update, int companyId, int userId, bool isManager);
         Task<ServiceResult> DeactivateInventoryAsync(int id, int companyId, int userId, bool isManager);
+        Task<ServiceResult> GetShareRecipientsAuthorizedAsync(int inventoryId, int companyId, int userId, bool isManager);
         Task<ServiceResult> ShareInventoryAuthorizedAsync(ShareRequestDTO request, int companyId, int userId, bool isManager);
         Task<ServiceResult> GetSharedInventoriesAuthorizedAsync(int inventoryId, int companyId, int userId, bool isManager);
         Task<ServiceResult> UpdateShareAccessAsync(int sharedInventoryId, int accessLevel, int companyId, int userId, bool isManager);
