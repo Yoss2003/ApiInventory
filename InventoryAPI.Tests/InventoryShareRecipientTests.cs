@@ -42,10 +42,44 @@ public sealed class InventoryShareRecipientTests
 
         Assert.True(success.Success);
         Assert.False(crossCompany.Success);
-        Assert.Contains("misma empresa", crossCompany.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("misma empresa", crossCompany.Message!.ToLowerInvariant());
         var saved = await db.SharedInventories.SingleAsync();
         Assert.Equal(20, saved.UserId);
         Assert.Equal(1, saved.CompanyId);
         Assert.Equal(SharedInventory.AccessMode.Editor, saved.AccessLevel);
+    }
+
+    [Fact]
+    public async Task GetShareRecipientsAuthorizedAsync_ReturnsOnlyActiveLinkedAccountsFromSameCompany()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        await using var db = new AppDbContext(options);
+        db.Users.AddRange(
+            new User { Id = 10, Username = "owner", CompanyId = 1, RoleId = 2, IsActive = true, StatusId = 1 },
+            new User { Id = 20, Username = "recipient", Email = "worker@example.com", CompanyId = 1, RoleId = 3, IsActive = true, StatusId = 1 },
+            new User { Id = 30, Username = "inactive", CompanyId = 1, RoleId = 3, IsActive = false, StatusId = 1 },
+            new User { Id = 40, Username = "other-company", CompanyId = 2, RoleId = 3, IsActive = true, StatusId = 1 });
+        db.Employees.AddRange(
+            new Employee { Id = 101, UserId = 10, CompanyId = 1, FirstName = "Owner", IsActive = true },
+            new Employee { Id = 102, UserId = 20, CompanyId = 1, FirstName = "Worker", LastName = "One", DNI = "12345678", IsActive = true },
+            new Employee { Id = 103, UserId = 30, CompanyId = 1, FirstName = "Inactive", IsActive = true },
+            new Employee { Id = 104, UserId = 40, CompanyId = 2, FirstName = "Other", IsActive = true });
+        db.Inventories.Add(new Inventory
+        {
+            Id = 100, InventoryName = "Almacén propietario", CompanyId = 1,
+            UserId = 10, Username = "owner", IsActive = true, IsMaster = false
+        });
+        await db.SaveChangesAsync();
+
+        var service = new InventoryService(new WorkFlow(db), db);
+        var result = await service.GetShareRecipientsAuthorizedAsync(100, 1, 10, false);
+
+        Assert.Equal(ServiceStatus.Ok, result.Status);
+        var recipients = Assert.IsType<List<InventoryShareRecipientDto>>(result.Payload);
+        var recipient = Assert.Single(recipients);
+        Assert.Equal(20, recipient.UserId);
+        Assert.Equal("worker", recipient.Username);
+        Assert.Equal("12345678", recipient.DNI);
     }
 }
