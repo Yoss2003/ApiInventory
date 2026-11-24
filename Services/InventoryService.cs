@@ -243,17 +243,16 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
             from employee in employees.DefaultIfEmpty()
             where share.CompanyId == companyId && share.InventoryId == inventoryId
             orderby employee.FirstName, employee.LastName, sharedUser.Username
-            select new
-            {
+            select new SharedInventoryAccessDto(
                 share.Id,
                 share.InventoryId,
                 share.UserId,
-                username = sharedUser != null ? sharedUser.Username : null,
-                firstName = employee != null ? employee.FirstName : null,
-                lastName = employee != null ? employee.LastName : null,
+                sharedUser != null ? sharedUser.Username : null,
+                employee != null ? employee.FirstName : null,
+                employee != null ? employee.LastName : null,
                 share.AccessLevel,
                 share.SharedDate
-            }).ToListAsync();
+            )).ToListAsync();
 
         return ServiceResult.Ok(records);
     }
