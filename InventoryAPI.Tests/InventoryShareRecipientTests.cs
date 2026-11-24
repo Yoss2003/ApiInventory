@@ -79,7 +79,7 @@ public sealed class InventoryShareRecipientTests
         var recipients = Assert.IsType<List<InventoryShareRecipientDto>>(result.Payload);
         var recipient = Assert.Single(recipients);
         Assert.Equal(20, recipient.UserId);
-        Assert.Equal("worker", recipient.Username);
+        Assert.Equal("recipient", recipient.Username);
         Assert.Equal("12345678", recipient.DNI);
     }
 }
