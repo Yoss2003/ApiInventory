@@ -236,8 +236,8 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
 
         var records = await (
             from share in db.SharedInventories.AsNoTracking()
-            join sharedUser in db.Users.AsNoTracking() on share.UserId equals sharedUser.Id into sharedUsers
-            from sharedUser in sharedUsers.DefaultIfEmpty()
+            join sharedUser in db.Users.AsNoTracking().Where(u => u.CompanyId == companyId)
+                on share.UserId equals sharedUser.Id
             join employee in db.Employees.AsNoTracking().Where(e => e.CompanyId == companyId && e.IsActive)
                 on (int?)share.UserId equals employee.UserId into employees
             from employee in employees.DefaultIfEmpty()
@@ -247,7 +247,7 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
                 share.Id,
                 share.InventoryId,
                 share.UserId,
-                sharedUser != null ? sharedUser.Username : null,
+                sharedUser.Username,
                 employee != null ? employee.FirstName : null,
                 employee != null ? employee.LastName : null,
                 share.AccessLevel,
