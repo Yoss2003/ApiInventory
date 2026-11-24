@@ -278,7 +278,7 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
     public async Task<(bool Success, string Message)> ShareInventoryAsync(ShareRequestDTO request)
     {
         if (request.InventoryId <= 0 ||
-            (request.GuestUserId is not > 0 && string.IsNullOrWhiteSpace(request.GuestIdentifier)) ||
+            (request.GuestUserId is null && string.IsNullOrWhiteSpace(request.GuestIdentifier)) ||
             (request.GuestUserId.HasValue && request.GuestUserId.Value <= 0) ||
             request.AccessLevel is not (SharedInventory.AccessMode.Lector or SharedInventory.AccessMode.Editor))
             return (false, "Selecciona un inventario, destinatario y permiso válidos.");
