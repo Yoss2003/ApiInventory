@@ -234,16 +234,27 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
             i.IsActive && !i.IsMaster && (i.UserId == userId || isManager));
         if (!canView) return ServiceResult.Forbid();
 
-        var records = await GetSharedInventoriesAsync(inventoryId);
-        return ServiceResult.Ok(records.Select(x => new
-        {
-            x.Id,
-            x.InventoryId,
-            x.UserId,
-            username = x.User?.Username,
-            x.AccessLevel,
-            x.SharedDate
-        }));
+        var records = await (
+            from share in db.SharedInventories.AsNoTracking()
+            join sharedUser in db.Users.AsNoTracking().Where(u => u.CompanyId == companyId)
+                on share.UserId equals sharedUser.Id
+            join employee in db.Employees.AsNoTracking().Where(e => e.CompanyId == companyId && e.IsActive)
+                on (int?)share.UserId equals employee.UserId into employees
+            from employee in employees.DefaultIfEmpty()
+            where share.CompanyId == companyId && share.InventoryId == inventoryId
+            orderby employee.FirstName, employee.LastName, sharedUser.Username
+            select new SharedInventoryAccessDto(
+                share.Id,
+                share.InventoryId,
+                share.UserId,
+                sharedUser.Username,
+                employee != null ? employee.FirstName : null,
+                employee != null ? employee.LastName : null,
+                share.AccessLevel,
+                share.SharedDate
+            )).ToListAsync();
+
+        return ServiceResult.Ok(records);
     }
 
     public async Task<ServiceResult> UpdateShareAccessAsync(int sharedInventoryId, int accessLevel, int companyId, int userId, bool isManager)
