@@ -49,7 +49,7 @@ public sealed class InventoryShareListTests
             new SharedInventory
             {
                 Id = 2,
-                CompanyId = 2,
+                CompanyId = 1,
                 InventoryId = 100,
                 UserId = 30,
                 AccessLevel = SharedInventory.AccessMode.Lector
