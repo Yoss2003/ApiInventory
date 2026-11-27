@@ -6,5 +6,6 @@
         public string Password { get; set; } = string.Empty;
         public string? TwoFactorCode { get; set; }
         public int CompanyId { get; set; }
+        public bool RememberMe { get; set; }
     }
 }

@@ -52,6 +52,7 @@ namespace InventoryAPI.Data
         public DbSet<SaleOperation> SaleOperations { get; set; }
         public DbSet<SaleCancellation> SaleCancellations { get; set; }
         public DbSet<CompanyLogo> CompanyLogos { get; set; }
+        public DbSet<RefreshSession> RefreshSessions { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -147,6 +148,15 @@ namespace InventoryAPI.Data
                 e.HasOne<Company>().WithOne()
                     .HasForeignKey<CompanyLogo>(x => x.CompanyId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+            modelBuilder.Entity<RefreshSession>(e =>
+            {
+                e.HasKey(x => x.Id);
+                e.Property(x => x.TokenHash).HasMaxLength(64).IsRequired();
+                e.HasIndex(x => x.TokenHash).IsUnique();
+                e.HasIndex(x => new { x.UserId, x.CompanyId, x.ExpiresAt });
+                e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+                e.HasOne<Company>().WithMany().HasForeignKey(x => x.CompanyId).OnDelete(DeleteBehavior.Restrict);
             });
 
         }
