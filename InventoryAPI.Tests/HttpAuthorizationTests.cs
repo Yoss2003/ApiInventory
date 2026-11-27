@@ -22,13 +22,14 @@ public sealed class HttpAuthorizationTests : IClassFixture<HttpAuthorizationTest
     private const string TestAudience = "ControlInventarioMovil";
 
     private readonly TestApiFactory _factory;
+    private Guid _sessionId;
 
     public HttpAuthorizationTests(TestApiFactory factory)
     {
         _factory = factory;
     }
 
-    private static string BuildJwt(int userId, int companyId, int roleId, DateTime expiresUtc, string signingKey = TestJwtKey)
+    private static string BuildJwt(int userId, int companyId, int roleId, DateTime expiresUtc, string signingKey = TestJwtKey, Guid? sessionId = null)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -37,14 +38,15 @@ public sealed class HttpAuthorizationTests : IClassFixture<HttpAuthorizationTest
         var utcExpires = expiresUtc.Kind == DateTimeKind.Utc ? expiresUtc : expiresUtc.ToUniversalTime();
         var utcNotBefore = utcExpires > utcNow ? utcNow.AddMinutes(-5) : utcExpires.AddMinutes(-10);
 
-        var claims = new[]
+        var claims = new List<Claim>
         {
-            new Claim(JwtRegisteredClaimNames.Sub, $"user{userId}"),
-            new Claim("UserId", userId.ToString()),
-            new Claim("CompanyId", companyId.ToString()),
-            new Claim("RoleId", roleId.ToString()),
-            new Claim("iat", new DateTimeOffset(utcNow).ToUnixTimeSeconds().ToString())
+            new(JwtRegisteredClaimNames.Sub, $"user{userId}"),
+            new("UserId", userId.ToString()),
+            new("CompanyId", companyId.ToString()),
+            new("RoleId", roleId.ToString()),
+            new("iat", new DateTimeOffset(utcNow).ToUnixTimeSeconds().ToString())
         };
+        if (sessionId.HasValue) claims.Add(new Claim("sid", sessionId.Value.ToString("D")));
 
         var token = new JwtSecurityToken(
             issuer: TestIssuer,
@@ -148,10 +150,25 @@ public sealed class HttpAuthorizationTests : IClassFixture<HttpAuthorizationTest
             }
 
             await db.SaveChangesAsync();
+
+            var sessionId = Guid.NewGuid();
+            db.RefreshSessions.Add(new RefreshSession
+            {
+                Id = sessionId,
+                UserId = 50,
+                CompanyId = 1,
+                TokenHash = new string('A', 64),
+                CreatedAt = DateTime.UtcNow,
+                ExpiresAt = DateTime.UtcNow.AddHours(1),
+                RememberMe = false
+            });
+            await db.SaveChangesAsync();
+            _sessionId = sessionId;
         }
 
         using var client = _factory.CreateClient();
-        var token = BuildJwt(userId: 50, companyId: 1, roleId: 5, expiresUtc: DateTime.UtcNow.AddHours(1));
+        var token = BuildJwt(userId: 50, companyId: 1, roleId: 5,
+            expiresUtc: DateTime.UtcNow.AddHours(1), sessionId: _sessionId);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
         var response = await client.GetAsync("/api/Customers");
