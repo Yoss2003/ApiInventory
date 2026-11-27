@@ -16,6 +16,14 @@ public static class SessionSecurityValidator
             !int.TryParse(claims.FindFirst("RoleId")?.Value, out var role))
         { context.Fail("Sesión sin ámbito válido."); return; }
         var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+        if (!Guid.TryParse(claims.FindFirst("sid")?.Value, out var sessionId))
+        { context.Fail("Sesión sin identificador válido."); return; }
+        var now = DateTime.UtcNow;
+        var activeSession = await db.RefreshSessions.AsNoTracking().FirstOrDefaultAsync(s =>
+            s.Id == sessionId && s.UserId == uid && s.CompanyId == cid &&
+            s.RevokedAt == null && s.ExpiresAt > now);
+        if (activeSession is null)
+        { context.Fail("La sesión expiró o fue revocada."); return; }
         var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == uid);
         if (user is null || !user.IsActive || user.StatusId != 1 || user.RoleId != role ||
             (role != 1 && user.CompanyId != cid))

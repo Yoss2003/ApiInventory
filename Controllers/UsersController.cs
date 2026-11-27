@@ -1,4 +1,10 @@
 using InventoryAPI.Models;
+using InventoryAPI.Data;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using Microsoft.IdentityModel.Tokens;
 using InventoryAPI.Models.DTO;
 using InventoryAPI.Security;
 using InventoryAPI.Services.IServices;
@@ -13,7 +19,9 @@ namespace InventoryAPI.Controllers
         IWebHostEnvironment env,
         IFcmNotificationService fcmNotificationService,
         ICompanyLicenseService licenseService,
-        InventoryAccessPolicy access) : BaseApiController
+        InventoryAccessPolicy access,
+        AppDbContext db,
+        IConfiguration configuration) : BaseApiController
     {
         [HttpGet]
         public async Task<ActionResult<IEnumerable<UserDTO>>> GetUsers()
@@ -145,7 +153,195 @@ namespace InventoryAPI.Controllers
                 return Ok(new { requirePasswordChange = true, passwordResetToken = token, expiresInMinutes = 15 });
             }
             var u = result.User!;
-            return Ok(new { u.Id, u.Username, u.Email, u.RoleId, companyId = request.CompanyId, u.Token });
+            var now = DateTime.UtcNow;
+            var expiresAt = now.Add(request.RememberMe ? TimeSpan.FromDays(30) : TimeSpan.FromHours(8));
+            var refreshToken = CreateOpaqueToken();
+            var session = new RefreshSession
+            {
+                Id = Guid.NewGuid(),
+                UserId = u.Id,
+                CompanyId = request.CompanyId,
+                TokenHash = HashToken(refreshToken),
+                CreatedAt = now,
+                ExpiresAt = expiresAt,
+                RememberMe = request.RememberMe
+            };
+            db.RefreshSessions.Add(session);
+            await db.SaveChangesAsync();
+            WriteRefreshCookie(refreshToken, session, now);
+            Response.Headers.CacheControl = "no-store";
+            var accessToken = CreateAccessToken(u, request.CompanyId, session.Id, now);
+            return Ok(new { u.Id, u.Username, u.Email, u.RoleId, companyId = request.CompanyId, token = accessToken });
+        }
+
+        [EnableRateLimiting("auth")]
+        [HttpPost("RefreshSession")]
+        [AllowAnonymous]
+        public async Task<IActionResult> RefreshSession()
+        {
+            if (!IsTrustedSessionRequest()) return Forbid();
+            var currentToken = Request.Cookies[RefreshCookieName];
+            if (string.IsNullOrWhiteSpace(currentToken)) return Unauthorized();
+
+            var tokenHash = HashToken(currentToken);
+            var now = DateTime.UtcNow;
+            var session = await db.RefreshSessions.FirstOrDefaultAsync(x =>
+                x.TokenHash == tokenHash && x.RevokedAt == null && x.ExpiresAt > now);
+            if (session is null)
+            {
+                ClearRefreshCookie();
+                return Unauthorized();
+            }
+
+            var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(x => x.Id == session.UserId);
+            var company = await db.Companies.AsNoTracking().FirstOrDefaultAsync(x => x.Id == session.CompanyId);
+            var valid = user is not null && company is not null &&
+                user.IsActive && user.StatusId == 1 &&
+                (user.RoleId == 1 || user.CompanyId == session.CompanyId) &&
+                company.IsActive;
+
+            if (valid && user!.RoleId != 1)
+            {
+                var license = await db.CompanyLicenses.AsNoTracking()
+                    .FirstOrDefaultAsync(x => x.CompanyId == session.CompanyId);
+                valid = license is null || (license.IsEnabled && license.ExpiresAt > now);
+            }
+
+            if (valid)
+            {
+                var lastPasswordRecovery = await db.PasswordRecoveryRequests.AsNoTracking()
+                    .Where(x => x.UserId == session.UserId && x.CompletedAt != null)
+                    .MaxAsync(x => (DateTime?)x.CompletedAt);
+                if (lastPasswordRecovery.HasValue && lastPasswordRecovery.Value >= session.CreatedAt)
+                    valid = false;
+            }
+
+            if (!valid)
+            {
+                session.RevokedAt = now;
+                await db.SaveChangesAsync();
+                ClearRefreshCookie();
+                return Unauthorized();
+            }
+
+            // Rotación: el refresh anterior deja de ser válido en cuanto se emite el nuevo.
+            var nextRefreshToken = CreateOpaqueToken();
+            session.TokenHash = HashToken(nextRefreshToken);
+            session.LastUsedAt = now;
+            await db.SaveChangesAsync();
+            WriteRefreshCookie(nextRefreshToken, session, now);
+            Response.Headers.CacheControl = "no-store";
+
+            var accessToken = CreateAccessToken(user!, session.CompanyId, session.Id, now);
+            return Ok(new
+            {
+                id = user!.Id,
+                username = user.Username,
+                email = user.Email,
+                roleId = user.RoleId,
+                companyId = session.CompanyId,
+                token = accessToken
+            });
+        }
+
+        [EnableRateLimiting("auth")]
+        [HttpPost("Logout")]
+        [AllowAnonymous]
+        public async Task<IActionResult> Logout()
+        {
+            if (!IsTrustedSessionRequest()) return Forbid();
+            var currentToken = Request.Cookies[RefreshCookieName];
+            if (!string.IsNullOrWhiteSpace(currentToken))
+            {
+                var tokenHash = HashToken(currentToken);
+                var session = await db.RefreshSessions.FirstOrDefaultAsync(x =>
+                    x.TokenHash == tokenHash && x.RevokedAt == null);
+                if (session is not null)
+                {
+                    session.RevokedAt = DateTime.UtcNow;
+                    await db.SaveChangesAsync();
+                }
+            }
+            ClearRefreshCookie();
+            Response.Headers.CacheControl = "no-store";
+            return NoContent();
+        }
+
+        private const string RefreshCookieName = "OmniStock.Session";
+
+        private bool IsTrustedSessionRequest()
+        {
+            if (!string.Equals(Request.Headers["X-OmniStock-Request"].ToString(), "1", StringComparison.Ordinal))
+                return false;
+            var origin = Request.Headers["Origin"].ToString();
+            if (string.IsNullOrWhiteSpace(origin)) return false;
+            var allowed = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+            if (allowed.Length == 0 && env.IsDevelopment()) allowed = ["http://localhost:4200"];
+            return allowed.Contains(origin, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static string CreateOpaqueToken()
+        {
+            return Convert.ToBase64String(RandomNumberGenerator.GetBytes(64))
+                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+
+        private static string HashToken(string token)
+        {
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+        }
+
+        private string CreateAccessToken(User user, int companyId, Guid sessionId, DateTime now)
+        {
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(configuration["Jwt:Key"]!));
+            var signing = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var claims = new[]
+            {
+                new Claim(JwtRegisteredClaimNames.Sub, user.Username ?? string.Empty),
+                new Claim("UserId", user.Id.ToString()),
+                new Claim("CompanyId", companyId.ToString()),
+                new Claim("RoleId", user.RoleId.ToString()),
+                new Claim("sid", sessionId.ToString("D")),
+                new Claim(JwtRegisteredClaimNames.Iat, new DateTimeOffset(now).ToUnixTimeSeconds().ToString(), ClaimValueTypes.Integer64)
+            };
+            var token = new JwtSecurityToken(
+                issuer: configuration["Jwt:Issuer"],
+                audience: configuration["Jwt:Audience"],
+                claims: claims,
+                notBefore: now,
+                expires: now.AddMinutes(15),
+                signingCredentials: signing);
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+        private void WriteRefreshCookie(string token, RefreshSession session, DateTime now)
+        {
+            var options = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                IsEssential = true,
+                Path = "/api/Users"
+            };
+            if (session.RememberMe)
+            {
+                options.Expires = new DateTimeOffset(DateTime.SpecifyKind(session.ExpiresAt, DateTimeKind.Utc));
+                options.MaxAge = session.ExpiresAt - now;
+            }
+            Response.Cookies.Append(RefreshCookieName, token, options);
+        }
+
+        private void ClearRefreshCookie()
+        {
+            Response.Cookies.Delete(RefreshCookieName, new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.None,
+                IsEssential = true,
+                Path = "/api/Users"
+            });
         }
 
         [HttpPost("ChangeInitialPassword")]
