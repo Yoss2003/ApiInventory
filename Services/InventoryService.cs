@@ -192,7 +192,9 @@ public class InventoryService(IWorkFlow workFlow, AppDbContext db)
         var source = await db.Inventories.AsNoTracking().FirstOrDefaultAsync(i =>
             i.Id == inventoryId && i.CompanyId == companyId && i.IsActive &&
             !i.IsMaster && (i.UserId == userId || isManager));
-        if (source is null) return ServiceResult.NotFound();
+        if (source is null)
+            return ServiceResult.NotFound(
+                "No se encontró un inventario operativo activo de tu empresa que puedas compartir. Verifica que no sea el inventario maestro y que seas su propietario o administrador.");
 
         var recipients = await (
             from employee in db.Employees.AsNoTracking()
