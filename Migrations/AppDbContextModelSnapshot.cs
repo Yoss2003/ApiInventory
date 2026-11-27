@@ -729,6 +729,7 @@ namespace InventoryAPI.Migrations
             modelBuilder.Entity("InventoryAPI.Models.RefreshSession", b =>
                 {
                     b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<int>("CompanyId")
@@ -758,6 +759,8 @@ namespace InventoryAPI.Migrations
                         .HasColumnType("integer");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CompanyId");
 
                     b.HasIndex("TokenHash")
                         .IsUnique();
